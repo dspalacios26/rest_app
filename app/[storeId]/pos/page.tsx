@@ -76,9 +76,10 @@ export default function POSPage() {
         try {
             let orderId = editingOrderId
 
-            // 1. Create or Update Order Header
             if (orderId) {
-                // Update header
+                // UPDATE EXISTING ORDER
+
+                // 1. Update header
                 const { error } = await supabase
                     .from('orders')
                     .update({
@@ -89,65 +90,83 @@ export default function POSPage() {
                     .eq('id', orderId)
                 if (error) throw error
 
-                // Diff Logic:
-                const { data: existingItems } = await supabase.from('order_items').select('*').eq('order_id', orderId)
-                const existingIds = existingItems?.map(i => i.id) || []
+                // 2. Fetch existing Active items
+                const { data: existingItems } = await supabase
+                    .from('order_items')
+                    .select('*')
+                    .eq('order_id', orderId)
+                    .neq('status', 'cancelled') // Ignore cancelled for logic
 
-                // Items to implicitly delete (removed from cart entirely)
-                const cartItemIds = cart.map(c => c.original_order_item_id).filter(Boolean)
-                const idsToCancel = existingIds.filter(id => !cartItemIds.includes(id))
+                // 3. Compare Cart (Target) vs Existing (Current)
+                // Group by MenuItemID
+
+                type ExistingItem = NonNullable<typeof existingItems>[number]
+                const existingMap = new Map<string, ExistingItem[]>()
+
+                existingItems?.forEach(item => {
+                    const list = existingMap.get(item.menu_item_id) || []
+                    list.push(item)
+                    existingMap.set(item.menu_item_id, list)
+                })
 
                 const itemsToInsert: any[] = []
                 const itemsToUpdate: any[] = []
-                const explicitCancels: string[] = [...idsToCancel]
+                const explicitCancels: string[] = []
 
-                for (const item of cart) {
-                    if (!item.original_order_item_id) {
-                        // New item added to cart
+                // Process Cart Items
+                for (const cartItem of cart) {
+                    const currentItems = existingMap.get(cartItem.id) || []
+                    const currentQty = currentItems.reduce((sum, i) => sum + i.quantity, 0)
+                    const targetQty = cartItem.quantity
+
+                    const diff = targetQty - currentQty
+
+                    if (diff > 0) {
+                        // ADD-ON: Insert NEW row for the difference
                         itemsToInsert.push({
                             order_id: orderId,
-                            menu_item_id: item.id,
-                            quantity: item.quantity,
-                            price_at_time: item.price,
-                            notes: item.notes,
+                            menu_item_id: cartItem.id,
+                            quantity: diff,
+                            price_at_time: cartItem.price,
+                            notes: cartItem.notes, // Notes on new items
                             status: 'active'
                         })
-                    } else {
-                        // Check existing
-                        const existing = existingItems?.find(i => i.id === item.original_order_item_id)
-                        if (existing) {
-                            const qtyChanged = existing.quantity !== item.quantity
-                            const notesChanged = existing.notes !== item.notes
+                        // Existing rows remain touched (Served/Prepared)
+                    } else if (diff < 0) {
+                        // REDUCTION: Reduce quantity or cancel rows
+                        // Remove |diff| amount
+                        let remainingToRemove = Math.abs(diff)
 
-                            if (qtyChanged || notesChanged) {
-                                // CHANGED: Cancel old, Insert new
-                                explicitCancels.push(existing.id)
-                                itemsToInsert.push({
-                                    order_id: orderId,
-                                    menu_item_id: item.id,
-                                    quantity: item.quantity,
-                                    price_at_time: item.price,
-                                    notes: item.notes,
-                                    status: 'active'
-                                })
+                        // Sort by created_at desc (remove newest first)
+                        currentItems.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+                        for (const item of currentItems) {
+                            if (remainingToRemove <= 0) break
+
+                            if (item.quantity <= remainingToRemove) {
+                                // Cancel entire item
+                                explicitCancels.push(item.id)
+                                remainingToRemove -= item.quantity
                             } else {
-                                // UNCHANGED: Ensure active
-                                if (existing.status !== 'active') {
-                                    itemsToUpdate.push({ id: existing.id, status: 'active' })
-                                }
+                                // Reduce quantity
+                                itemsToUpdate.push({
+                                    id: item.id,
+                                    quantity: item.quantity - remainingToRemove
+                                })
+                                remainingToRemove = 0
                             }
-                        } else {
-                            // Fallback
-                            itemsToInsert.push({
-                                order_id: orderId,
-                                menu_item_id: item.id,
-                                quantity: item.quantity,
-                                price_at_time: item.price,
-                                notes: item.notes,
-                                status: 'active'
-                            })
                         }
+                    } else {
+                        // Exact match
                     }
+
+                    // Remove from map to track what's left (items in DB but not in Cart)
+                    existingMap.delete(cartItem.id)
+                }
+
+                // Any items left in existingMap are in DB but NOT in Cart -> Cancel all
+                for (const [_, items] of existingMap) {
+                    items.forEach(i => explicitCancels.push(i.id))
                 }
 
                 // Execute Batch operations
@@ -164,7 +183,7 @@ export default function POSPage() {
                 }
 
             } else {
-                // Create New
+                // CREATE NEW ORDER
                 const { data: orderData, error: orderError } = await supabase
                     .from('orders')
                     .insert([{
@@ -212,32 +231,45 @@ export default function POSPage() {
     }
 
     const handleEditOrder = (order: Order) => {
-        // Load order into cart
-        const newCart: CartItem[] = (order.items || []).map(item => ({
-            id: item.menu_item_id,
-            name: item.menu_items?.name || 'Unknown',
-            price: (item as any).price_at_time || 0, // Need to ensure we get this. schema has it.
-            // We might need to fetch price from menu if we use current menu price for modifications
-            // logic: Use current cart logic which uses menu items.
-            // Let's match with menuItems to get current Data (Image/Category)
-            // Fallback to name if missing from menu (deleted item)
-            category: 'Saved',
-            available: true,
-            quantity: item.quantity,
-            notes: item.notes,
-            original_order_item_id: item.id
-        })).map(cartItem => {
-            const menuItem = menuItems.find(m => m.id === cartItem.id)
-            if (menuItem) {
-                return { ...cartItem, ...menuItem, price: menuItem.price } // Update to current price? Or keep old? Usually modify = current price.
-            }
-            return cartItem
-        })
+        // Aggregate items by menu_item_id
+        const aggregatedItems = new Map<string, CartItem>()
 
-        setCart(newCart)
+        if (order.items) {
+            order.items.forEach(item => {
+                if (item.status === 'cancelled') return
+
+                const existing = aggregatedItems.get(item.menu_item_id)
+                if (existing) {
+                    existing.quantity += item.quantity
+                    if (item.notes) existing.notes = (existing.notes ? existing.notes + "; " : "") + item.notes
+                } else {
+                    const menuItem = menuItems.find(m => m.id === item.menu_item_id)
+                    if (!menuItem) return
+
+                    aggregatedItems.set(item.menu_item_id, {
+                        ...menuItem,
+                        quantity: item.quantity,
+                        notes: item.notes || '',
+                    })
+                }
+            })
+        }
+
+        setCart(Array.from(aggregatedItems.values()))
         setTableNumber(order.table_number)
         setEditingOrderId(order.id)
         setActiveTab('menu')
+    }
+
+    const handleCancelOrder = async (orderId: string) => {
+        if (!confirm("Are you sure you want to cancel this order?")) return
+        const { error } = await supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId)
+        if (error) {
+            console.error(error)
+            alert("Failed to cancel")
+        } else {
+            refreshOrders()
+        }
     }
 
     const handlePaymentClick = (order: Order) => {
@@ -406,6 +438,10 @@ export default function POSPage() {
                                                     onClick={() => handlePaymentClick(order)}
                                                 >
                                                     <CreditCard className="w-4 h-4 mr-2" /> Pay
+                                                </Button>
+                                                {/* ADDED CANCEL BUTTON */}
+                                                <Button size="sm" variant="ghost" className="text-destructive hover:bg-destructive/10" onClick={() => handleCancelOrder(order.id)}>
+                                                    <Trash2 className="w-4 h-4" />
                                                 </Button>
                                             </>
                                         )}

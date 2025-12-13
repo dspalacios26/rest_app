@@ -1,7 +1,7 @@
 "use client"
 
 import { useParams } from "next/navigation"
-import { CheckCircle2, Clock, ChefHat, AlertCircle, Trash2 } from "lucide-react"
+import { CheckCircle2, Clock, ChefHat, AlertCircle, Trash2, RotateCcw } from "lucide-react"
 import { useOrders, Order } from "@/hooks/use-orders"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils"
 
 export default function KitchenPage() {
     const { storeId } = useParams()
-    const { orders, loading, updateStatus } = useOrders(storeId as string)
+    const { orders, loading, updateStatus, refresh } = useOrders(storeId as string)
 
     const columns = [
         { id: 'queue', label: 'On Queue', icon: Clock, color: 'text-slate-500', border: 'border-slate-200' },
@@ -27,8 +27,11 @@ export default function KitchenPage() {
         <div className="h-full flex flex-col space-y-4">
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold tracking-tight">Kitchen Display</h1>
-                <div className="flex gap-2">
-                    <span className="text-sm text-muted-foreground flex items-center gap-1">
+                <div className="flex gap-2 items-center">
+                    <Button variant="outline" size="sm" onClick={() => refresh()}>
+                        <RotateCcw className="w-4 h-4 mr-2" /> Refresh
+                    </Button>
+                    <span className="text-sm text-muted-foreground flex items-center gap-1 ml-2">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> Live
                     </span>
                 </div>

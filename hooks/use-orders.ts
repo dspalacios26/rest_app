@@ -21,8 +21,10 @@ export type Order = {
     table_number: string
     status: 'queue' | 'preparing' | 'ready' | 'served' | 'paid' | 'cancelled'
     total_amount?: number
+    tip_amount?: number // Added for tips logic
     created_at: string
     items?: OrderItem[]
+    items_count?: number
     notes?: string
 }
 

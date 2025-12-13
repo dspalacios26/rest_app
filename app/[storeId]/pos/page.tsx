@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { Search, Plus, Minus, Trash2, CreditCard, Utensils, Coffee, ListOrdered, Edit, Settings } from "lucide-react"
+import { Search, Plus, Minus, Trash2, CreditCard, Utensils, Coffee, ListOrdered, Edit, Settings, Box } from "lucide-react"
 import { useMenu, MenuItem } from "@/hooks/use-menu"
 import { useOrders, Order, OrderItem } from "@/hooks/use-orders"
 import { supabase } from "@/lib/supabase"
@@ -12,7 +12,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { MenuManager } from "@/components/menu-manager"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, cn } from "@/lib/utils"
 
 type CartItem = MenuItem & { quantity: number; notes: string; original_order_item_id?: string }
 
@@ -21,7 +21,7 @@ export default function POSPage() {
     const { menuItems, loading: loadingMenu } = useMenu(storeId as string)
     const { orders: activeOrders, refresh: refreshOrders, updateStatus } = useOrders(storeId as string)
 
-    const [activeTab, setActiveTab] = useState<'menu' | 'orders'>('menu')
+    const [activeTab, setActiveTab] = useState<'menu' | 'orders' | 'history'>('menu')
     const [cart, setCart] = useState<CartItem[]>([])
     const [selectedCategory, setSelectedCategory] = useState<string>('All')
     const [searchQuery, setSearchQuery] = useState("")
@@ -32,6 +32,24 @@ export default function POSPage() {
     const [tipAmount, setTipAmount] = useState<string>("0")
 
     const [submitting, setSubmitting] = useState(false)
+    const [historyOrders, setHistoryOrders] = useState<Order[]>([])
+
+    // Fetch history
+    useEffect(() => {
+        if (activeTab === 'history' && storeId) {
+            const fetchHistory = async () => {
+                const { data } = await supabase
+                    .from('orders')
+                    .select('*, items:order_items(*, menu_items(*))')
+                    .eq('store_id', storeId)
+                    .in('status', ['paid', 'cancelled'])
+                    .order('created_at', { ascending: false })
+                    .limit(50)
+                if (data) setHistoryOrders(data)
+            }
+            fetchHistory()
+        }
+    }, [activeTab, storeId])
 
     // Categories derivation
     const categories = ['All', ...Array.from(new Set(menuItems.map(i => i.category)))]
@@ -281,13 +299,6 @@ export default function POSPage() {
         if (!paymentOrder) return
 
         const tip = parseFloat(tipAmount) || 0
-        // Update total with tip and status
-        // Usually Total = Food + Tip.
-        // Current total_amount in DB is Food. 
-        // We should update total_amount = Food + Tip? Or store Tip separately? Schema has no tip column.
-        // User said "remove the tip from the order generation", "include how much it was... how much tip was added... obtain full bill"
-        // I'll assume we update total_amount to include tip.
-
         const finalTotal = (paymentOrder.total_amount || 0) + tip
 
         const { error } = await supabase
@@ -295,7 +306,7 @@ export default function POSPage() {
             .update({
                 status: 'paid',
                 total_amount: finalTotal,
-                // notes: `Tip: ${tip}` // Optional logging
+                tip_amount: tip // Save raw tip amount
             })
             .eq('id', paymentOrder.id)
 
@@ -335,6 +346,19 @@ export default function POSPage() {
                             className="gap-2"
                         >
                             <ListOrdered className="w-4 h-4" /> Active Orders
+                        </Button>
+                        <Button
+                            variant={activeTab === 'history' ? 'default' : 'ghost'}
+                            onClick={() => {
+                                if (editingOrderId) {
+                                    if (confirm("Discard changes to currently editing order?")) resetCart()
+                                    else return
+                                }
+                                setActiveTab('history')
+                            }}
+                            className="gap-2"
+                        >
+                            <Box className="w-4 h-4" /> History
                         </Button>
                     </div>
 
@@ -406,7 +430,7 @@ export default function POSPage() {
                             )}
                         </div>
                     </>
-                ) : (
+                ) : activeTab === 'orders' ? (
                     /* Active Orders List */
                     <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
                         {activeOrders.length === 0 && <div className="text-center py-10">No active orders.</div>}
@@ -447,6 +471,44 @@ export default function POSPage() {
                                         )}
                                         {order.status === 'paid' && <Button size="sm" disabled>Paid</Button>}
                                     </div>
+                                </div>
+                            </Card>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                        <div className="flex justify-between items-center pb-2 border-b">
+                            <h3 className="font-semibold">Recent History</h3>
+                            <span className="text-xs text-muted-foreground">Last 50 orders</span>
+                        </div>
+                        {historyOrders.length === 0 && <div className="text-center py-10 text-muted-foreground">No history found.</div>}
+                        {historyOrders.map(order => (
+                            <Card key={order.id} className="flex flex-col sm:flex-row justify-between p-4 gap-4 opacity-80">
+                                <div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="font-bold text-lg">Table {order.table_number}</div>
+                                        <span className={cn("text-xs px-2 py-0.5 rounded uppercase border",
+                                            order.status === 'paid' ? "bg-green-100 text-green-800 border-green-200" : "bg-red-100 text-red-800 border-red-200"
+                                        )}>
+                                            {order.status}
+                                        </span>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {new Date(order.created_at).toLocaleString()} • #{order.order_number || order.id.slice(0, 4)}
+                                    </div>
+                                    <div className="mt-2 text-sm">
+                                        {order.items?.map((item, i) => (
+                                            <div key={i}>{item.quantity}x {item.menu_items?.name}</div>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div className="flex flex-col items-end gap-2 justify-center">
+                                    <div className="text-xl font-bold">{formatCurrency(order.total_amount || 0)}</div>
+                                    {(order.tip_amount || 0) > 0 && (
+                                        <div className="text-xs text-muted-foreground italic">
+                                            Tip: {formatCurrency(order.tip_amount || 0)}
+                                        </div>
+                                    )}
                                 </div>
                             </Card>
                         ))}

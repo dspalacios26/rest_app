@@ -62,9 +62,10 @@ export function useMenu(storeId: string) {
 
     const deleteItem = async (itemId: string) => {
         try {
+            // Soft delete: just mark as unavailable
             const { error } = await supabase
                 .from('menu_items')
-                .delete()
+                .update({ available: false })
                 .eq('id', itemId)
 
             if (error) throw error

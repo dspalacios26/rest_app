@@ -17,6 +17,10 @@ const formatPrice = (price: number) => new Intl.NumberFormat('en-US', { style: '
 
 type CartItem = MenuItem & { quantity: number; notes: string }
 
+import { MenuManager } from "@/components/menu-manager"
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { Settings } from "lucide-react"
+
 export default function POSPage() {
     const { storeId } = useParams()
     const { menuItems, loading: loadingMenu } = useMenu(storeId as string)
@@ -132,21 +136,34 @@ export default function POSPage() {
             {/* Left Panel: Content */}
             <div className="flex-1 flex flex-col gap-4">
                 {/* Header / Tabs */}
-                <div className="flex items-center gap-4 bg-card p-3 rounded-lg border shadow-sm">
-                    <Button
-                        variant={activeTab === 'menu' ? 'default' : 'ghost'}
-                        onClick={() => setActiveTab('menu')}
-                        className="gap-2"
-                    >
-                        <Utensils className="w-4 h-4" /> New Order
-                    </Button>
-                    <Button
-                        variant={activeTab === 'orders' ? 'default' : 'ghost'}
-                        onClick={() => setActiveTab('orders')}
-                        className="gap-2"
-                    >
-                        <ListOrdered className="w-4 h-4" /> Active Orders
-                    </Button>
+                <div className="flex items-center justify-between bg-card p-3 rounded-lg border shadow-sm">
+                    <div className="flex gap-4">
+                        <Button
+                            variant={activeTab === 'menu' ? 'default' : 'ghost'}
+                            onClick={() => setActiveTab('menu')}
+                            className="gap-2"
+                        >
+                            <Utensils className="w-4 h-4" /> New Order
+                        </Button>
+                        <Button
+                            variant={activeTab === 'orders' ? 'default' : 'ghost'}
+                            onClick={() => setActiveTab('orders')}
+                            className="gap-2"
+                        >
+                            <ListOrdered className="w-4 h-4" /> Active Orders
+                        </Button>
+                    </div>
+
+                    <Dialog>
+                        <DialogTrigger asChild>
+                            <Button variant="outline" size="icon">
+                                <Settings className="w-4 h-4" />
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="max-w-2xl">
+                            <MenuManager storeId={storeId as string} />
+                        </DialogContent>
+                    </Dialog>
                 </div>
 
                 {activeTab === 'menu' ? (

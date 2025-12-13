@@ -43,5 +43,37 @@ export function useMenu(storeId: string) {
         }
     }
 
-    return { menuItems, loading, refresh: fetchMenu }
+    const upsertItem = async (item: Partial<MenuItem>) => {
+        try {
+            const { data, error } = await supabase
+                .from('menu_items')
+                .upsert({ ...item, store_id: storeId })
+                .select()
+                .single()
+
+            if (error) throw error
+            fetchMenu() // Refresh list
+            return data
+        } catch (error) {
+            console.error('Error upserting item:', error)
+            throw error
+        }
+    }
+
+    const deleteItem = async (itemId: string) => {
+        try {
+            const { error } = await supabase
+                .from('menu_items')
+                .delete()
+                .eq('id', itemId)
+
+            if (error) throw error
+            fetchMenu() // Refresh list
+        } catch (error) {
+            console.error('Error deleting item:', error)
+            throw error
+        }
+    }
+
+    return { menuItems, loading, refresh: fetchMenu, upsertItem, deleteItem }
 }

@@ -78,11 +78,11 @@ export default function POSPage() {
 
             // 1. Create or Update Order Header
             if (orderId) {
-                // Update existing order (status -> queue, update total)
+                // Update header
                 const { error } = await supabase
                     .from('orders')
                     .update({
-                        status: 'queue', // Return to queue
+                        status: 'queue',
                         total_amount: total,
                         table_number: tableNumber
                     })
@@ -90,36 +90,78 @@ export default function POSPage() {
                 if (error) throw error
 
                 // Diff Logic:
-                // Fetch existing items
                 const { data: existingItems } = await supabase.from('order_items').select('*').eq('order_id', orderId)
                 const existingIds = existingItems?.map(i => i.id) || []
 
-                // Identify items to Cancel (Present in DB but NOT in Cart)
+                // Items to implicitly delete (removed from cart entirely)
                 const cartItemIds = cart.map(c => c.original_order_item_id).filter(Boolean)
                 const idsToCancel = existingIds.filter(id => !cartItemIds.includes(id))
 
-                if (idsToCancel.length > 0) {
-                    await supabase
-                        .from('order_items')
-                        .update({ status: 'cancelled' })
-                        .in('id', idsToCancel)
+                const itemsToInsert: any[] = []
+                const itemsToUpdate: any[] = []
+                const explicitCancels: string[] = [...idsToCancel]
+
+                for (const item of cart) {
+                    if (!item.original_order_item_id) {
+                        // New item added to cart
+                        itemsToInsert.push({
+                            order_id: orderId,
+                            menu_item_id: item.id,
+                            quantity: item.quantity,
+                            price_at_time: item.price,
+                            notes: item.notes,
+                            status: 'active'
+                        })
+                    } else {
+                        // Check existing
+                        const existing = existingItems?.find(i => i.id === item.original_order_item_id)
+                        if (existing) {
+                            const qtyChanged = existing.quantity !== item.quantity
+                            const notesChanged = existing.notes !== item.notes
+
+                            if (qtyChanged || notesChanged) {
+                                // CHANGED: Cancel old, Insert new
+                                explicitCancels.push(existing.id)
+                                itemsToInsert.push({
+                                    order_id: orderId,
+                                    menu_item_id: item.id,
+                                    quantity: item.quantity,
+                                    price_at_time: item.price,
+                                    notes: item.notes,
+                                    status: 'active'
+                                })
+                            } else {
+                                // UNCHANGED: Ensure active
+                                if (existing.status !== 'active') {
+                                    itemsToUpdate.push({ id: existing.id, status: 'active' })
+                                }
+                            }
+                        } else {
+                            // Fallback
+                            itemsToInsert.push({
+                                order_id: orderId,
+                                menu_item_id: item.id,
+                                quantity: item.quantity,
+                                price_at_time: item.price,
+                                notes: item.notes,
+                                status: 'active'
+                            })
+                        }
+                    }
                 }
 
-                // Upsert items (Insert new, Update existing qty)
-                // Note: we can't easily bulk upsert with mixed operations without explicit ID,
-                // but supabase upsert works if ID matches.
-                const itemsToUpsert = cart.map(item => ({
-                    id: item.original_order_item_id, // Undefined for new items -> Insert
-                    order_id: orderId,
-                    menu_item_id: item.id,
-                    quantity: item.quantity,
-                    price_at_time: item.price,
-                    notes: item.notes,
-                    status: 'active' // Ensure active
-                }))
+                // Execute Batch operations
+                if (explicitCancels.length > 0) {
+                    await supabase.from('order_items').update({ status: 'cancelled' }).in('id', explicitCancels)
+                }
 
-                const { error: upsertError } = await supabase.from('order_items').upsert(itemsToUpsert)
-                if (upsertError) throw upsertError
+                if (itemsToUpdate.length > 0) {
+                    await supabase.from('order_items').upsert(itemsToUpdate)
+                }
+
+                if (itemsToInsert.length > 0) {
+                    await supabase.from('order_items').insert(itemsToInsert)
+                }
 
             } else {
                 // Create New

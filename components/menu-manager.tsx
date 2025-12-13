@@ -111,7 +111,10 @@ export function MenuManager({ storeId }: { storeId: string }) {
                                 />
                             </div>
                         </div>
-                        <DialogFooter>
+                        <DialogFooter className="flex justify-between items-center sm:justify-between">
+                            <Button type="button" variant="secondary" onClick={() => setIsOpen(false)}>
+                                Close
+                            </Button>
                             <Button type="submit">Save changes</Button>
                         </DialogFooter>
                     </form>

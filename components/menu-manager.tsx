@@ -126,11 +126,11 @@ export function MenuManager({ storeId }: { storeId: string }) {
                             <div className="font-medium">{item.name}</div>
                             <div className="text-xs text-muted-foreground">{item.category} • ${item.price}</div>
                         </div>
-                        <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" onClick={() => handleOpen(item)}>
+                        <div className="flex gap-2">
+                            <Button variant="ghost" size="icon" onClick={() => handleOpen(item)} className="h-8 w-8">
                                 <Edit className="w-4 h-4 text-blue-500" />
                             </Button>
-                            <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)}>
+                            <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="h-8 w-8">
                                 <Trash2 className="w-4 h-4 text-red-500" />
                             </Button>
                         </div>

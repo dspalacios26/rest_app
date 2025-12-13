@@ -8,6 +8,8 @@ export type OrderItem = {
     menu_item_id: string
     quantity: number
     notes: string
+    status?: 'active' | 'cancelled'
+    created_at?: string
     menu_items: {
         name: string
     }

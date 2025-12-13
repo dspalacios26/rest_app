@@ -107,12 +107,29 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
             </CardHeader>
 
             <CardContent className="p-3 pt-0 space-y-1">
-                {order.items?.map((item, idx) => (
-                    <div key={idx} className="flex justify-between text-sm">
-                        <span className="font-medium">{item.quantity}x {item.menu_items?.name || 'Unknown Item'}</span>
-                        {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[100px]">{item.notes}</span>}
-                    </div>
-                ))}
+                {order.items?.map((item, idx) => {
+                    // Diff Logic Check
+                    const isCancelled = item.status === 'cancelled'
+
+                    // Check if new (created > 5s after order)
+                    const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0
+                    const orderTime = new Date(order.created_at).getTime()
+                    const isNew = !isCancelled && (itemTime - orderTime > 5000)
+
+                    return (
+                        <div key={idx} className={cn("flex justify-between text-sm p-1 rounded",
+                            isCancelled ? "text-muted-foreground line-through opacity-70" : "",
+                            isNew ? "bg-yellow-100 dark:bg-yellow-900/40 font-medium" : ""
+                        )}>
+                            <span className="flex gap-1 items-center">
+                                {isNew && <span className="text-[10px] bg-yellow-500 text-white px-1 rounded-sm">NEW</span>}
+                                {isCancelled && <span className="text-[10px] bg-slate-200 text-slate-800 px-1 rounded-sm no-underline inline-block mr-1">DEL</span>}
+                                {item.quantity}x {item.menu_items?.name || 'Unknown Item'}
+                            </span>
+                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[100px]">{item.notes}</span>}
+                        </div>
+                    )
+                })}
                 {order.notes && (
                     <div className="mt-2 text-xs bg-amber-100 dark:bg-amber-900/30 p-1.5 rounded text-amber-800 dark:text-amber-200">
                         Note: {order.notes}

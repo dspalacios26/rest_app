@@ -89,16 +89,37 @@ export default function POSPage() {
                     .eq('id', orderId)
                 if (error) throw error
 
-                // Delete existing items (simplest way to handle modifications is replace logic or diffing, 
-                // but for "Modify active order" standard might be just adding if using 'items' array, 
-                // BUT here 'cart' represents the FULL state. So let's delete old items and re-insert 
-                // OR better: diff them. For MVP: Delete & Re-insert is risky with history/stats if using simple IDs.
-                // Let's use Delete & Re-insert for simplicity as requested "modified... appear as new order" logic-ish.
-                // Actually user said: "if an order is modified, it will appear as if it was a new order, with the highlight of the new food that was added."
-                // That implies Keeping old items and ADDING new ones generally, but the user wants to "Modify" which implies changing quantities/removing too.
-                // I will Delete & Insert logic for consistency of state = cart.
+                // Diff Logic:
+                // Fetch existing items
+                const { data: existingItems } = await supabase.from('order_items').select('*').eq('order_id', orderId)
+                const existingIds = existingItems?.map(i => i.id) || []
 
-                await supabase.from('order_items').delete().eq('order_id', orderId)
+                // Identify items to Cancel (Present in DB but NOT in Cart)
+                const cartItemIds = cart.map(c => c.original_order_item_id).filter(Boolean)
+                const idsToCancel = existingIds.filter(id => !cartItemIds.includes(id))
+
+                if (idsToCancel.length > 0) {
+                    await supabase
+                        .from('order_items')
+                        .update({ status: 'cancelled' })
+                        .in('id', idsToCancel)
+                }
+
+                // Upsert items (Insert new, Update existing qty)
+                // Note: we can't easily bulk upsert with mixed operations without explicit ID,
+                // but supabase upsert works if ID matches.
+                const itemsToUpsert = cart.map(item => ({
+                    id: item.original_order_item_id, // Undefined for new items -> Insert
+                    order_id: orderId,
+                    menu_item_id: item.id,
+                    quantity: item.quantity,
+                    price_at_time: item.price,
+                    notes: item.notes,
+                    status: 'active' // Ensure active
+                }))
+
+                const { error: upsertError } = await supabase.from('order_items').upsert(itemsToUpsert)
+                if (upsertError) throw upsertError
 
             } else {
                 // Create New
@@ -114,23 +135,20 @@ export default function POSPage() {
                     .single()
                 if (orderError) throw orderError
                 orderId = orderData.id
+
+                // Insert Items
+                const orderItems = cart.map((item) => ({
+                    order_id: orderId,
+                    menu_item_id: item.id,
+                    quantity: item.quantity,
+                    price_at_time: item.price,
+                    notes: item.notes,
+                    status: 'active'
+                }))
+
+                const { error: itemsError } = await supabase.from('order_items').insert(orderItems)
+                if (itemsError) throw itemsError
             }
-
-            // 2. Insert Items
-            // Note: We are using current price.
-            const orderItems = cart.map((item) => ({
-                order_id: orderId,
-                menu_item_id: item.id,
-                quantity: item.quantity,
-                price_at_time: item.price,
-                notes: item.notes
-            }))
-
-            const { error: itemsError } = await supabase
-                .from('order_items')
-                .insert(orderItems)
-
-            if (itemsError) throw itemsError
 
             // Reset
             resetCart()

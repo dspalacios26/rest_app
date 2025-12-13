@@ -71,6 +71,8 @@ export function useOrders(storeId: string) {
             menu_item_id,
             quantity,
             notes,
+            status,
+            created_at,
             menu_items (
               name
             )

@@ -107,29 +107,68 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
             </CardHeader>
 
             <CardContent className="p-3 pt-0 space-y-1">
-                {order.items?.map((item, idx) => {
-                    // Diff Logic Check
-                    const isCancelled = item.status === 'cancelled'
+                {(() => {
+                    // Logic to split items
+                    const items = order.items || []
+                    const isCancelled = (item: any) => item.status === 'cancelled'
 
-                    // Check if new (created > 5s after order)
-                    const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0
-                    const orderTime = new Date(order.created_at).getTime()
-                    const isNew = !isCancelled && (itemTime - orderTime > 5000)
+                    // "New" items: Not cancelled + created > 2s after order
+                    const isNew = (item: any) => {
+                        if (item.status === 'cancelled') return false
+                        const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0
+                        const orderTime = new Date(order.created_at).getTime()
+                        return (itemTime - orderTime > 2000)
+                    }
+
+                    const newItems = items.filter(isNew)
+                    const oldItems = items.filter(i => !isNew(i) && !isCancelled(i))
+                    const cancelledItems = items.filter(isCancelled)
 
                     return (
-                        <div key={idx} className={cn("flex justify-between text-sm p-1 rounded",
-                            isCancelled ? "text-muted-foreground line-through opacity-70" : "",
-                            isNew ? "bg-yellow-100 dark:bg-yellow-900/40 font-medium" : ""
-                        )}>
-                            <span className="flex gap-1 items-center">
-                                {isNew && <span className="text-[10px] bg-yellow-500 text-white px-1 rounded-sm">NEW</span>}
-                                {isCancelled && <span className="text-[10px] bg-slate-200 text-slate-800 px-1 rounded-sm no-underline inline-block mr-1">DEL</span>}
-                                {item.quantity}x {item.menu_items?.name || 'Unknown Item'}
-                            </span>
-                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[100px]">{item.notes}</span>}
+                        <div className="space-y-3">
+                            {/* NEW ITEMS SECTION */}
+                            {newItems.length > 0 && (
+                                <div className="bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded border border-yellow-200 dark:border-yellow-800">
+                                    <div className="text-xs font-bold text-yellow-600 dark:text-yellow-400 mb-1 uppercase tracking-wider">New Items</div>
+                                    <div className="space-y-1">
+                                        {newItems.map((item, idx) => (
+                                            <div key={idx} className="flex justify-between text-sm font-medium">
+                                                <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{item.notes}</span>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* EXISTING ITEMS SECTION */}
+                            {oldItems.length > 0 && (
+                                <div className={cn("space-y-1", newItems.length > 0 && "opacity-60")}>
+                                    {newItems.length > 0 && <div className="text-xs font-bold text-muted-foreground mb-1 uppercase tracking-wider">Already Prepared</div>}
+                                    {oldItems.map((item, idx) => (
+                                        <div key={idx} className="flex justify-between text-sm">
+                                            <span>{item.quantity}x {item.menu_items?.name}</span>
+                                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{item.notes}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* CANCELLED ITEMS SECTION */}
+                            {cancelledItems.length > 0 && (
+                                <div className="pt-2 border-t border-dashed">
+                                    <div className="text-xs font-bold text-red-500/70 mb-1 uppercase tracking-wider">Cancelled</div>
+                                    {cancelledItems.map((item, idx) => (
+                                        <div key={idx} className="flex justify-between text-sm text-muted-foreground line-through opacity-70">
+                                            <span>{item.quantity}x {item.menu_items?.name}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )
-                })}
+                })()}
+
                 {order.notes && (
                     <div className="mt-2 text-xs bg-amber-100 dark:bg-amber-900/30 p-1.5 rounded text-amber-800 dark:text-amber-200">
                         Note: {order.notes}

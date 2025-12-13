@@ -23,10 +23,25 @@ export default function AdminPage() {
     const [investment, setInvestment] = useState<string>("1000")
     const [timeRange, setTimeRange] = useState<'day' | 'week' | 'month' | 'year'>('week')
 
+    // Auth State
+    const [isAuthenticated, setIsAuthenticated] = useState(false)
+    const [passwordInput, setPasswordInput] = useState("")
+    const [authError, setAuthError] = useState(false)
+
     useEffect(() => {
-        if (!storeId) return
+        if (!storeId || !isAuthenticated) return
         fetchData()
-    }, [storeId, timeRange])
+    }, [storeId, timeRange, isAuthenticated])
+
+    const handleLogin = (e: React.FormEvent) => {
+        e.preventDefault()
+        if (passwordInput === "d0Ncu1o_") {
+            setIsAuthenticated(true)
+            setAuthError(false)
+        } else {
+            setAuthError(true)
+        }
+    }
 
     const fetchData = async () => {
         setLoading(true)
@@ -98,6 +113,35 @@ export default function AdminPage() {
             .sort((a, b) => b.value - a.value)
             .slice(0, 5) // Top 5
     }, [orders])
+
+    if (!isAuthenticated) {
+        return (
+            <div className="flex h-[calc(100vh-6rem)] items-center justify-center">
+                <Card className="w-full max-w-md">
+                    <CardHeader>
+                        <CardTitle>Admin Access Required</CardTitle>
+                        <CardDescription>Enter password to view analytics.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <form onSubmit={handleLogin} className="space-y-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="password">Password</Label>
+                                <Input
+                                    id="password"
+                                    type="password"
+                                    value={passwordInput}
+                                    onChange={(e) => setPasswordInput(e.target.value)}
+                                    placeholder="Enter access code"
+                                />
+                                {authError && <p className="text-sm text-destructive font-medium">Incorrect password.</p>}
+                            </div>
+                            <Button type="submit" className="w-full">Access Dashboard</Button>
+                        </form>
+                    </CardContent>
+                </Card>
+            </div>
+        )
+    }
 
     return (
         <div className="space-y-8">

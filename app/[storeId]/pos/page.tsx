@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
-import { Search, Plus, Minus, Trash2, CreditCard, Utensils, Coffee, ListOrdered, Edit, Settings, Box } from "lucide-react"
+import { Search, Plus, Minus, Trash2, CreditCard, Utensils, Coffee, ListOrdered, Edit, Settings, Box, ShoppingCart } from "lucide-react"
 import { useMenu, MenuItem } from "@/hooks/use-menu"
 import { useOrders, Order, OrderItem } from "@/hooks/use-orders"
 import { supabase } from "@/lib/supabase"
@@ -32,7 +32,8 @@ const encodePlateNotes = (plate: number, userNotes: string) => {
 
 const newLineId = () => {
     // crypto.randomUUID is available in modern browsers; fall back for safety.
-    return (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const cryptoObj = globalThis.crypto as Crypto | undefined
+    return cryptoObj?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 type CartItem = MenuItem & { lineId: string; plate: number; quantity: number; notes: string; original_order_item_id?: string }
@@ -53,6 +54,9 @@ export default function POSPage() {
 
     const [paymentOrder, setPaymentOrder] = useState<Order | null>(null)
     const [tipAmount, setTipAmount] = useState<string>("0")
+
+    const [cartOpen, setCartOpen] = useState(false)
+    const [showCartSidebar, setShowCartSidebar] = useState(true)
 
     const [submitting, setSubmitting] = useState(false)
     const [historyOrders, setHistoryOrders] = useState<Order[]>([])
@@ -170,8 +174,15 @@ export default function POSPage() {
                     existingMap.set(key, list)
                 })
 
-                const itemsToInsert: any[] = []
-                const itemsToUpdate: any[] = []
+                const itemsToInsert: Array<{
+                    order_id: string
+                    menu_item_id: string
+                    quantity: number
+                    price_at_time: number
+                    notes: string
+                    status: 'active'
+                }> = []
+                const itemsToUpdate: Array<{ id: string; quantity: number }> = []
                 const explicitCancels: string[] = []
 
                 // Process Cart Items
@@ -390,13 +401,13 @@ export default function POSPage() {
     }
 
     return (
-        <div className="h-[calc(100vh-6rem)] flex gap-6">
+        <div className="min-h-[calc(100vh-6rem)] flex flex-col lg:flex-row gap-4 lg:gap-6">
 
             {/* Left Panel: Content */}
             <div className="flex-1 flex flex-col gap-4">
                 {/* Header / Tabs */}
-                <div className="flex items-center justify-between bg-card p-3 rounded-lg border shadow-sm">
-                    <div className="flex gap-4">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-card p-3 rounded-lg border shadow-sm">
+                    <div className="flex flex-wrap gap-2">
                         <Button
                             variant={activeTab === 'menu' ? 'default' : 'ghost'}
                             onClick={() => setActiveTab('menu')}
@@ -432,16 +443,39 @@ export default function POSPage() {
                         </Button>
                     </div>
 
-                    <Dialog>
-                        <DialogTrigger asChild>
-                            <Button variant="outline" size="icon">
-                                <Settings className="w-4 h-4" />
-                            </Button>
-                        </DialogTrigger>
-                        <DialogContent className="max-w-2xl">
-                            <MenuManager storeId={storeId as string} />
-                        </DialogContent>
-                    </Dialog>
+                    <div className="flex items-center gap-2">
+                        {activeTab === 'menu' && (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-2 lg:hidden"
+                                    onClick={() => setCartOpen(true)}
+                                >
+                                    <ShoppingCart className="w-4 h-4" /> Cart ({cart.length})
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="gap-2 hidden lg:inline-flex"
+                                    onClick={() => setShowCartSidebar(s => !s)}
+                                >
+                                    <ShoppingCart className="w-4 h-4" /> {showCartSidebar ? 'Hide Cart' : 'Show Cart'}
+                                </Button>
+                            </>
+                        )}
+
+                        <Dialog>
+                            <DialogTrigger asChild>
+                                <Button variant="outline" size="icon" aria-label="Open settings">
+                                    <Settings className="w-4 h-4" />
+                                </Button>
+                            </DialogTrigger>
+                            <DialogContent className="max-w-2xl">
+                                <MenuManager storeId={storeId as string} />
+                            </DialogContent>
+                        </Dialog>
+                    </div>
                 </div>
 
                 {activeTab === 'menu' ? (
@@ -587,8 +621,8 @@ export default function POSPage() {
             </div>
 
             {/* Right Panel: Cart */}
-            {activeTab === 'menu' && (
-                <Card className="w-80 md:w-96 flex flex-col shadow-lg border-l h-full">
+            {activeTab === 'menu' && showCartSidebar && (
+                <Card className="hidden lg:flex w-full lg:w-96 flex-col shadow-lg border-l h-full">
                     <div className="p-4 border-b bg-muted/20">
                         <h2 className="font-semibold flex items-center gap-2">
                             {editingOrderId ? 'Editing Order' : 'New Order'}
@@ -729,6 +763,162 @@ export default function POSPage() {
                     </div>
                 </Card>
             )}
+
+            {/* Mobile Cart Dialog */}
+            <Dialog open={cartOpen} onOpenChange={setCartOpen}>
+                <DialogContent className="max-w-md p-0">
+                    <div className="max-h-[80vh] overflow-hidden">
+                        <Card className="w-full flex flex-col shadow-none border-0 rounded-none">
+                            <div className="p-4 border-b bg-muted/20">
+                                <h2 className="font-semibold flex items-center gap-2">
+                                    <ShoppingCart className="w-4 h-4" /> Cart
+                                </h2>
+                                {editingOrderId && <span className="text-xs text-orange-500">Updating will return order to queue</span>}
+                            </div>
+
+                            <div className="p-4 grid gap-4 bg-muted/10">
+                                <div className="space-y-2">
+                                    <Label className="text-xs">Table No.</Label>
+                                    <Input
+                                        value={tableNumber}
+                                        onChange={e => setTableNumber(e.target.value)}
+                                        placeholder="#"
+                                        className="h-8"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-xs">Add to plate</Label>
+                                    <div className="flex items-center gap-2">
+                                        <Select value={String(selectedPlate)} onValueChange={(v) => setSelectedPlate(parseInt(v, 10) || 1)}>
+                                            <SelectTrigger className="h-8">
+                                                <SelectValue placeholder="Select plate" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                    <SelectItem key={p} value={String(p)}>
+                                                        Plate {p}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => {
+                                                setPlateCount(c => c + 1)
+                                                setSelectedPlate(plateCount + 1)
+                                            }}
+                                        >
+                                            + Plate
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                                {cart.length === 0 ? (
+                                    <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-2 opacity-50">
+                                        <Utensils className="w-12 h-12" />
+                                        <p>Cart is empty</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-5">
+                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
+                                            const plateItems = cart.filter(i => i.plate === plate)
+                                            const plateTotal = plateItems.reduce((acc, i) => acc + (i.price * i.quantity), 0)
+
+                                            return (
+                                                <div key={plate} className="space-y-2">
+                                                    <div className="flex items-center justify-between">
+                                                        <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plate {plate}</div>
+                                                        <div className="text-xs text-muted-foreground">{plateItems.length > 0 ? formatCurrency(plateTotal) : ''}</div>
+                                                    </div>
+
+                                                    {plateItems.length === 0 ? (
+                                                        <div className="text-xs text-muted-foreground italic">No items</div>
+                                                    ) : (
+                                                        <div className="space-y-3">
+                                                            {plateItems.map(item => (
+                                                                <div key={item.lineId} className="flex gap-2">
+                                                                    <div className="flex-1">
+                                                                        <div className="flex justify-between font-medium text-sm">
+                                                                            <span>{item.name}</span>
+                                                                            <span>{formatCurrency(item.price * item.quantity)}</span>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2 mt-1">
+                                                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
+                                                                                <Minus className="w-3 h-3" />
+                                                                            </Button>
+                                                                            <span className="text-sm w-4 text-center">{item.quantity}</span>
+                                                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
+                                                                                <Plus className="w-3 h-3" />
+                                                                            </Button>
+
+                                                                            <div className="ml-auto flex items-center gap-2">
+                                                                                <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
+                                                                                    <SelectTrigger className="h-7 w-[110px] text-xs">
+                                                                                        <SelectValue />
+                                                                                    </SelectTrigger>
+                                                                                    <SelectContent>
+                                                                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                                                            <SelectItem key={p} value={String(p)}>
+                                                                                                Plate {p}
+                                                                                            </SelectItem>
+                                                                                        ))}
+                                                                                    </SelectContent>
+                                                                                </Select>
+
+                                                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
+                                                                                    <Trash2 className="w-3 h-3" />
+                                                                                </Button>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="p-4 border-t space-y-4 bg-muted/20">
+                                <div className="space-y-2">
+                                    <div className="flex justify-between font-bold text-lg pt-2 border-t">
+                                        <span>Total</span>
+                                        <span>{formatCurrency(total)}</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    {editingOrderId && (
+                                        <Button variant="outline" className="flex-1" onClick={resetCart}>
+                                            Cancel
+                                        </Button>
+                                    )}
+                                    <Button
+                                        className="flex-1 gap-2"
+                                        size="lg"
+                                        disabled={cart.length === 0 || submitting}
+                                        onClick={async () => {
+                                            await handlePlaceOrder()
+                                            setCartOpen(false)
+                                        }}
+                                    >
+                                        {submitting ? "Processing..." : (
+                                            editingOrderId ? "Update Order" : "Place Order"
+                                        )}
+                                    </Button>
+                                </div>
+                            </div>
+                        </Card>
+                    </div>
+                </DialogContent>
+            </Dialog>
 
             {/* Payment Dialog */}
             <Dialog open={!!paymentOrder} onOpenChange={(open) => !open && setPaymentOrder(null)}>

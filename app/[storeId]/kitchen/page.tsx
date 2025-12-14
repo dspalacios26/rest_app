@@ -77,6 +77,13 @@ export default function KitchenPage() {
     )
 }
 
+const PLATE_MARKER_RE = /^\[PLATE:(\d+)\]\s*/
+
+const stripPlateMarker = (notes: string | null | undefined) => {
+    if (!notes) return ""
+    return notes.replace(PLATE_MARKER_RE, "")
+}
+
 function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpdate: any, colId: string }) {
     const isModified = false; // Logic for detecting modification could be added here based on timestamp vs last_viewed
 
@@ -137,7 +144,7 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                         {newItems.map((item, idx) => (
                                             <div key={idx} className="flex justify-between text-sm font-medium">
                                                 <span>{item.quantity}x {item.menu_items?.name}</span>
-                                                {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{item.notes}</span>}
+                                                {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
                                             </div>
                                         ))}
                                     </div>
@@ -151,7 +158,7 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                     {oldItems.map((item, idx) => (
                                         <div key={idx} className="flex justify-between text-sm">
                                             <span>{item.quantity}x {item.menu_items?.name}</span>
-                                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{item.notes}</span>}
+                                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
                                         </div>
                                     ))}
                                 </div>

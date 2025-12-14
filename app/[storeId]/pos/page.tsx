@@ -11,10 +11,31 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { MenuManager } from "@/components/menu-manager"
 import { formatCurrency, cn } from "@/lib/utils"
 
-type CartItem = MenuItem & { quantity: number; notes: string; original_order_item_id?: string }
+const PLATE_MARKER_RE = /^\[PLATE:(\d+)\]\s*/
+
+const decodePlateNotes = (raw: string | null | undefined) => {
+    const notes = (raw || "").toString()
+    const m = notes.match(PLATE_MARKER_RE)
+    if (!m) return { plate: 1, notes }
+    const plate = Math.max(1, parseInt(m[1] || "1", 10) || 1)
+    return { plate, notes: notes.replace(PLATE_MARKER_RE, "") }
+}
+
+const encodePlateNotes = (plate: number, userNotes: string) => {
+    const clean = (userNotes || "").trim()
+    return clean ? `[PLATE:${plate}] ${clean}` : `[PLATE:${plate}]`
+}
+
+const newLineId = () => {
+    // crypto.randomUUID is available in modern browsers; fall back for safety.
+    return (globalThis.crypto as any)?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+type CartItem = MenuItem & { lineId: string; plate: number; quantity: number; notes: string; original_order_item_id?: string }
 
 export default function POSPage() {
     const { storeId } = useParams()
@@ -23,6 +44,8 @@ export default function POSPage() {
 
     const [activeTab, setActiveTab] = useState<'menu' | 'orders' | 'history'>('menu')
     const [cart, setCart] = useState<CartItem[]>([])
+    const [plateCount, setPlateCount] = useState(1)
+    const [activePlate, setActivePlate] = useState(1)
     const [selectedCategory, setSelectedCategory] = useState<string>('All')
     const [searchQuery, setSearchQuery] = useState("")
     const [tableNumber, setTableNumber] = useState("")
@@ -64,23 +87,41 @@ export default function POSPage() {
     // Cart Logic
     const addToCart = (item: MenuItem) => {
         setCart(prev => {
-            const existing = prev.find(i => i.id === item.id)
+            const existing = prev.find(i => i.id === item.id && i.plate === activePlate && i.notes === '')
             if (existing) {
-                return prev.map(i => i.id === item.id ? { ...i, quantity: i.quantity + 1 } : i)
+                return prev.map(i => i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i)
             }
-            return [...prev, { ...item, quantity: 1, notes: '' }]
+            return [...prev, { ...item, lineId: newLineId(), plate: activePlate, quantity: 1, notes: '' }]
         })
     }
 
-    const updateQuantity = (itemId: string, delta: number) => {
+    const updateQuantity = (lineId: string, delta: number) => {
         setCart(prev => prev.map(i => {
-            if (i.id === itemId) return { ...i, quantity: Math.max(1, i.quantity + delta) }
+            if (i.lineId === lineId) return { ...i, quantity: Math.max(1, i.quantity + delta) }
             return i
         }))
     }
 
-    const removeFromCart = (itemId: string) => {
-        setCart(prev => prev.filter(i => i.id !== itemId))
+    const removeFromCart = (lineId: string) => {
+        setCart(prev => prev.filter(i => i.lineId !== lineId))
+    }
+
+    const moveToPlate = (lineId: string, nextPlate: number) => {
+        setCart(prev => {
+            const moving = prev.find(i => i.lineId === lineId)
+            if (!moving) return prev
+            if (moving.plate === nextPlate) return prev
+
+            const updated = prev.map(i => i.lineId === lineId ? { ...i, plate: nextPlate } : i)
+            const moved = { ...moving, plate: nextPlate }
+
+            const duplicate = updated.find(i => i.lineId !== lineId && i.id === moved.id && i.plate === moved.plate && i.notes === moved.notes)
+            if (!duplicate) return updated
+
+            return updated
+                .filter(i => i.lineId !== lineId)
+                .map(i => i.lineId === duplicate.lineId ? { ...i, quantity: i.quantity + moved.quantity } : i)
+        })
     }
 
     // Totals for Cart
@@ -116,15 +157,17 @@ export default function POSPage() {
                     .neq('status', 'cancelled') // Ignore cancelled for logic
 
                 // 3. Compare Cart (Target) vs Existing (Current)
-                // Group by MenuItemID
+                // Group by MenuItemID + Plate + Notes (so plates can be edited/moved cleanly)
 
                 type ExistingItem = NonNullable<typeof existingItems>[number]
                 const existingMap = new Map<string, ExistingItem[]>()
 
                 existingItems?.forEach(item => {
-                    const list = existingMap.get(item.menu_item_id) || []
+                    const decoded = decodePlateNotes(item.notes)
+                    const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}`
+                    const list = existingMap.get(key) || []
                     list.push(item)
-                    existingMap.set(item.menu_item_id, list)
+                    existingMap.set(key, list)
                 })
 
                 const itemsToInsert: any[] = []
@@ -133,7 +176,8 @@ export default function POSPage() {
 
                 // Process Cart Items
                 for (const cartItem of cart) {
-                    const currentItems = existingMap.get(cartItem.id) || []
+                    const key = `${cartItem.id}|${cartItem.plate}|${(cartItem.notes || '').trim()}`
+                    const currentItems = existingMap.get(key) || []
                     const currentQty = currentItems.reduce((sum, i) => sum + i.quantity, 0)
                     const targetQty = cartItem.quantity
 
@@ -146,7 +190,7 @@ export default function POSPage() {
                             menu_item_id: cartItem.id,
                             quantity: diff,
                             price_at_time: cartItem.price,
-                            notes: cartItem.notes, // Notes on new items
+                            notes: encodePlateNotes(cartItem.plate, cartItem.notes),
                             status: 'active'
                         })
                         // Existing rows remain touched (Served/Prepared)
@@ -179,7 +223,7 @@ export default function POSPage() {
                     }
 
                     // Remove from map to track what's left (items in DB but not in Cart)
-                    existingMap.delete(cartItem.id)
+                    existingMap.delete(key)
                 }
 
                 // Any items left in existingMap are in DB but NOT in Cart -> Cancel all
@@ -216,12 +260,28 @@ export default function POSPage() {
                 orderId = orderData.id
 
                 // Insert Items
-                const orderItems = cart.map((item) => ({
+                const grouped = new Map<string, { menu_item_id: string; quantity: number; price_at_time: number; notes: string }>()
+                for (const item of cart) {
+                    const key = `${item.id}|${item.plate}|${(item.notes || '').trim()}`
+                    const existing = grouped.get(key)
+                    if (existing) {
+                        existing.quantity += item.quantity
+                    } else {
+                        grouped.set(key, {
+                            menu_item_id: item.id,
+                            quantity: item.quantity,
+                            price_at_time: item.price,
+                            notes: encodePlateNotes(item.plate, item.notes),
+                        })
+                    }
+                }
+
+                const orderItems = Array.from(grouped.values()).map((g) => ({
                     order_id: orderId,
-                    menu_item_id: item.id,
-                    quantity: item.quantity,
-                    price_at_time: item.price,
-                    notes: item.notes,
+                    menu_item_id: g.menu_item_id,
+                    quantity: g.quantity,
+                    price_at_time: g.price_at_time,
+                    notes: g.notes,
                     status: 'active'
                 }))
 
@@ -246,34 +306,44 @@ export default function POSPage() {
         setCart([])
         setTableNumber("")
         setEditingOrderId(null)
+        setPlateCount(1)
+        setActivePlate(1)
     }
 
     const handleEditOrder = (order: Order) => {
-        // Aggregate items by menu_item_id
+        // Aggregate items by menu_item_id + plate + notes
         const aggregatedItems = new Map<string, CartItem>()
+        let maxPlate = 1
 
         if (order.items) {
             order.items.forEach(item => {
                 if (item.status === 'cancelled') return
 
-                const existing = aggregatedItems.get(item.menu_item_id)
+                const decoded = decodePlateNotes(item.notes)
+                maxPlate = Math.max(maxPlate, decoded.plate)
+                const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}`
+                const existing = aggregatedItems.get(key)
                 if (existing) {
                     existing.quantity += item.quantity
-                    if (item.notes) existing.notes = (existing.notes ? existing.notes + "; " : "") + item.notes
+                    // Keep notes stable for the group.
                 } else {
                     const menuItem = menuItems.find(m => m.id === item.menu_item_id)
                     if (!menuItem) return
 
-                    aggregatedItems.set(item.menu_item_id, {
+                    aggregatedItems.set(key, {
                         ...menuItem,
+                        lineId: newLineId(),
+                        plate: decoded.plate,
                         quantity: item.quantity,
-                        notes: item.notes || '',
+                        notes: decoded.notes || '',
                     })
                 }
             })
         }
 
         setCart(Array.from(aggregatedItems.values()))
+        setPlateCount(Math.max(1, maxPlate))
+        setActivePlate(1)
         setTableNumber(order.table_number)
         setEditingOrderId(order.id)
         setActiveTab('menu')
@@ -536,6 +606,34 @@ export default function POSPage() {
                                 className="h-8"
                             />
                         </div>
+
+                        <div className="space-y-2">
+                            <Label className="text-xs">Plates</Label>
+                            <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                    <Button
+                                        key={p}
+                                        variant={activePlate === p ? 'secondary' : 'outline'}
+                                        size="sm"
+                                        onClick={() => setActivePlate(p)}
+                                        className="whitespace-nowrap"
+                                    >
+                                        Plate {p}
+                                    </Button>
+                                ))}
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                        setPlateCount(c => c + 1)
+                                        setActivePlate(plateCount + 1)
+                                    }}
+                                    className="whitespace-nowrap"
+                                >
+                                    + Plate
+                                </Button>
+                            </div>
+                        </div>
                     </div>
 
                     <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
@@ -545,28 +643,54 @@ export default function POSPage() {
                                 <p>Cart is empty</p>
                             </div>
                         ) : (
-                            cart.map(item => (
-                                <div key={item.id} className="flex gap-2">
+                            cart.filter(i => i.plate === activePlate).length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-2 opacity-60">
+                                    <Utensils className="w-10 h-10" />
+                                    <p>No items on Plate {activePlate}</p>
+                                    <p className="text-xs">Select a plate above and add items.</p>
+                                </div>
+                            ) : (
+                                cart
+                                    .filter(i => i.plate === activePlate)
+                                    .map(item => (
+                                        <div key={item.lineId} className="flex gap-2">
                                     <div className="flex-1">
                                         <div className="flex justify-between font-medium text-sm">
                                             <span>{item.name}</span>
                                             <span>{formatCurrency(item.price * item.quantity)}</span>
                                         </div>
                                         <div className="flex items-center gap-2 mt-1">
-                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.id, -1)}>
+                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
                                                 <Minus className="w-3 h-3" />
                                             </Button>
                                             <span className="text-sm w-4 text-center">{item.quantity}</span>
-                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.id, 1)}>
+                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
                                                 <Plus className="w-3 h-3" />
                                             </Button>
-                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive ml-auto" onClick={() => removeFromCart(item.id)}>
-                                                <Trash2 className="w-3 h-3" />
-                                            </Button>
+
+                                            <div className="ml-auto flex items-center gap-2">
+                                                <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
+                                                    <SelectTrigger className="h-7 w-[110px] text-xs">
+                                                        <SelectValue />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                            <SelectItem key={p} value={String(p)}>
+                                                                Plate {p}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+
+                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
+                                                    <Trash2 className="w-3 h-3" />
+                                                </Button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            ))
+                                    ))
+                            )
                         )}
                     </div>
 

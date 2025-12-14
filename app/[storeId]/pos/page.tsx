@@ -45,7 +45,7 @@ export default function POSPage() {
     const [activeTab, setActiveTab] = useState<'menu' | 'orders' | 'history'>('menu')
     const [cart, setCart] = useState<CartItem[]>([])
     const [plateCount, setPlateCount] = useState(1)
-    const [activePlate, setActivePlate] = useState(1)
+    const [selectedPlate, setSelectedPlate] = useState(1)
     const [selectedCategory, setSelectedCategory] = useState<string>('All')
     const [searchQuery, setSearchQuery] = useState("")
     const [tableNumber, setTableNumber] = useState("")
@@ -87,11 +87,11 @@ export default function POSPage() {
     // Cart Logic
     const addToCart = (item: MenuItem) => {
         setCart(prev => {
-            const existing = prev.find(i => i.id === item.id && i.plate === activePlate && i.notes === '')
+            const existing = prev.find(i => i.id === item.id && i.plate === selectedPlate && i.notes === '')
             if (existing) {
                 return prev.map(i => i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i)
             }
-            return [...prev, { ...item, lineId: newLineId(), plate: activePlate, quantity: 1, notes: '' }]
+            return [...prev, { ...item, lineId: newLineId(), plate: selectedPlate, quantity: 1, notes: '' }]
         })
     }
 
@@ -307,7 +307,7 @@ export default function POSPage() {
         setTableNumber("")
         setEditingOrderId(null)
         setPlateCount(1)
-        setActivePlate(1)
+        setSelectedPlate(1)
     }
 
     const handleEditOrder = (order: Order) => {
@@ -343,7 +343,7 @@ export default function POSPage() {
 
         setCart(Array.from(aggregatedItems.values()))
         setPlateCount(Math.max(1, maxPlate))
-        setActivePlate(1)
+        setSelectedPlate(1)
         setTableNumber(order.table_number)
         setEditingOrderId(order.id)
         setActiveTab('menu')
@@ -609,26 +609,26 @@ export default function POSPage() {
 
                         <div className="space-y-2">
                             <Label className="text-xs">Plates</Label>
-                            <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
-                                    <Button
-                                        key={p}
-                                        variant={activePlate === p ? 'secondary' : 'outline'}
-                                        size="sm"
-                                        onClick={() => setActivePlate(p)}
-                                        className="whitespace-nowrap"
-                                    >
-                                        Plate {p}
-                                    </Button>
-                                ))}
+                            <div className="flex items-center gap-2">
+                                <Select value={String(selectedPlate)} onValueChange={(v) => setSelectedPlate(parseInt(v, 10) || 1)}>
+                                    <SelectTrigger className="h-8">
+                                        <SelectValue placeholder="Select plate" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                            <SelectItem key={p} value={String(p)}>
+                                                Plate {p}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                                 <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={() => {
                                         setPlateCount(c => c + 1)
-                                        setActivePlate(plateCount + 1)
+                                        setSelectedPlate(plateCount + 1)
                                     }}
-                                    className="whitespace-nowrap"
                                 >
                                     + Plate
                                 </Button>
@@ -643,54 +643,66 @@ export default function POSPage() {
                                 <p>Cart is empty</p>
                             </div>
                         ) : (
-                            cart.filter(i => i.plate === activePlate).length === 0 ? (
-                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-2 opacity-60">
-                                    <Utensils className="w-10 h-10" />
-                                    <p>No items on Plate {activePlate}</p>
-                                    <p className="text-xs">Select a plate above and add items.</p>
-                                </div>
-                            ) : (
-                                cart
-                                    .filter(i => i.plate === activePlate)
-                                    .map(item => (
-                                        <div key={item.lineId} className="flex gap-2">
-                                    <div className="flex-1">
-                                        <div className="flex justify-between font-medium text-sm">
-                                            <span>{item.name}</span>
-                                            <span>{formatCurrency(item.price * item.quantity)}</span>
-                                        </div>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
-                                                <Minus className="w-3 h-3" />
-                                            </Button>
-                                            <span className="text-sm w-4 text-center">{item.quantity}</span>
-                                            <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
-                                                <Plus className="w-3 h-3" />
-                                            </Button>
+                            <div className="space-y-5">
+                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
+                                    const plateItems = cart.filter(i => i.plate === plate)
+                                    const plateTotal = plateItems.reduce((acc, i) => acc + (i.price * i.quantity), 0)
 
-                                            <div className="ml-auto flex items-center gap-2">
-                                                <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
-                                                    <SelectTrigger className="h-7 w-[110px] text-xs">
-                                                        <SelectValue />
-                                                    </SelectTrigger>
-                                                    <SelectContent>
-                                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
-                                                            <SelectItem key={p} value={String(p)}>
-                                                                Plate {p}
-                                                            </SelectItem>
-                                                        ))}
-                                                    </SelectContent>
-                                                </Select>
-
-                                                <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
-                                                    <Trash2 className="w-3 h-3" />
-                                                </Button>
+                                    return (
+                                        <div key={plate} className="space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plate {plate}</div>
+                                                <div className="text-xs text-muted-foreground">{plateItems.length > 0 ? formatCurrency(plateTotal) : ''}</div>
                                             </div>
+
+                                            {plateItems.length === 0 ? (
+                                                <div className="text-xs text-muted-foreground italic">No items</div>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    {plateItems.map(item => (
+                                                        <div key={item.lineId} className="flex gap-2">
+                                                            <div className="flex-1">
+                                                                <div className="flex justify-between font-medium text-sm">
+                                                                    <span>{item.name}</span>
+                                                                    <span>{formatCurrency(item.price * item.quantity)}</span>
+                                                                </div>
+                                                                <div className="flex items-center gap-2 mt-1">
+                                                                    <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
+                                                                        <Minus className="w-3 h-3" />
+                                                                    </Button>
+                                                                    <span className="text-sm w-4 text-center">{item.quantity}</span>
+                                                                    <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
+                                                                        <Plus className="w-3 h-3" />
+                                                                    </Button>
+
+                                                                    <div className="ml-auto flex items-center gap-2">
+                                                                        <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
+                                                                            <SelectTrigger className="h-7 w-[110px] text-xs">
+                                                                                <SelectValue />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent>
+                                                                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                                                    <SelectItem key={p} value={String(p)}>
+                                                                                        Plate {p}
+                                                                                    </SelectItem>
+                                                                                ))}
+                                                                            </SelectContent>
+                                                                        </Select>
+
+                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
+                                                                            <Trash2 className="w-3 h-3" />
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
-                                </div>
-                                    ))
-                            )
+                                    )
+                                })}
+                            </div>
                         )}
                     </div>
 

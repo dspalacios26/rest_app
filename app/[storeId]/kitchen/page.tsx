@@ -84,6 +84,24 @@ const stripPlateMarker = (notes: string | null | undefined) => {
     return notes.replace(PLATE_MARKER_RE, "")
 }
 
+const getPlateNumber = (notes: string | null | undefined) => {
+    if (!notes) return 1
+    const m = notes.match(PLATE_MARKER_RE)
+    if (!m) return 1
+    return Math.max(1, parseInt(m[1] || "1", 10) || 1)
+}
+
+const groupByPlate = (items: any[]) => {
+    const grouped = new Map<number, any[]>()
+    for (const item of items) {
+        const plate = getPlateNumber(item.notes)
+        const list = grouped.get(plate) || []
+        list.push(item)
+        grouped.set(plate, list)
+    }
+    return Array.from(grouped.entries()).sort(([a], [b]) => a - b)
+}
+
 function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpdate: any, colId: string }) {
     const isModified = false; // Logic for detecting modification could be added here based on timestamp vs last_viewed
 
@@ -141,10 +159,15 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                 <div className="bg-yellow-50 dark:bg-yellow-900/20 p-2 rounded border border-yellow-200 dark:border-yellow-800">
                                     <div className="text-xs font-bold text-yellow-600 dark:text-yellow-400 mb-1 uppercase tracking-wider">New Items</div>
                                     <div className="space-y-1">
-                                        {newItems.map((item, idx) => (
-                                            <div key={idx} className="flex justify-between text-sm font-medium">
-                                                <span>{item.quantity}x {item.menu_items?.name}</span>
-                                                {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                        {groupByPlate(newItems).map(([plate, items]) => (
+                                            <div key={plate} className="space-y-1">
+                                                <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
+                                                {items.map((item, idx) => (
+                                                    <div key={idx} className="flex justify-between text-sm font-medium">
+                                                        <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                        {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                    </div>
+                                                ))}
                                             </div>
                                         ))}
                                     </div>
@@ -155,10 +178,15 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                             {oldItems.length > 0 && (
                                 <div className={cn("space-y-1", newItems.length > 0 && "opacity-60")}>
                                     {newItems.length > 0 && <div className="text-xs font-bold text-muted-foreground mb-1 uppercase tracking-wider">Already Prepared</div>}
-                                    {oldItems.map((item, idx) => (
-                                        <div key={idx} className="flex justify-between text-sm">
-                                            <span>{item.quantity}x {item.menu_items?.name}</span>
-                                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                    {groupByPlate(oldItems).map(([plate, items]) => (
+                                        <div key={plate} className="space-y-1">
+                                            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
+                                            {items.map((item, idx) => (
+                                                <div key={idx} className="flex justify-between text-sm">
+                                                    <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                    {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                </div>
+                                            ))}
                                         </div>
                                     ))}
                                 </div>
@@ -168,9 +196,14 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                             {cancelledItems.length > 0 && (
                                 <div className="pt-2 border-t border-dashed">
                                     <div className="text-xs font-bold text-red-500/70 mb-1 uppercase tracking-wider">Cancelled</div>
-                                    {cancelledItems.map((item, idx) => (
-                                        <div key={idx} className="flex justify-between text-sm text-muted-foreground line-through opacity-70">
-                                            <span>{item.quantity}x {item.menu_items?.name}</span>
+                                    {groupByPlate(cancelledItems).map(([plate, items]) => (
+                                        <div key={plate} className="space-y-1">
+                                            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
+                                            {items.map((item, idx) => (
+                                                <div key={idx} className="flex justify-between text-sm text-muted-foreground line-through opacity-70">
+                                                    <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                </div>
+                                            ))}
                                         </div>
                                     ))}
                                 </div>

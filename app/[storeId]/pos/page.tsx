@@ -447,9 +447,9 @@ export default function POSPage() {
                         {activeTab === 'menu' && (
                             <>
                                 <Button
-                                    variant="outline"
+                                    variant="default"
                                     size="sm"
-                                    className="gap-2 lg:hidden"
+                                    className="gap-2 lg:hidden transition-colors"
                                     onClick={() => setCartOpen(true)}
                                 >
                                     <ShoppingCart className="w-4 h-4" /> Cart ({cart.length})
@@ -621,8 +621,14 @@ export default function POSPage() {
             </div>
 
             {/* Right Panel: Cart */}
-            {activeTab === 'menu' && showCartSidebar && (
-                <Card className="hidden lg:flex w-full lg:w-96 flex-col shadow-lg border-l h-full">
+            {activeTab === 'menu' && (
+                <div
+                    className={cn(
+                        "hidden lg:block overflow-hidden transition-all duration-300",
+                        showCartSidebar ? "w-96 opacity-100" : "w-0 opacity-0 pointer-events-none"
+                    )}
+                >
+                    <Card className={cn("w-full flex flex-col shadow-lg border-l h-full", !showCartSidebar && "border-0 shadow-none")}>
                     <div className="p-4 border-b bg-muted/20">
                         <h2 className="font-semibold flex items-center gap-2">
                             {editingOrderId ? 'Editing Order' : 'New Order'}
@@ -761,12 +767,13 @@ export default function POSPage() {
                             </Button>
                         </div>
                     </div>
-                </Card>
+                    </Card>
+                </div>
             )}
 
             {/* Mobile Cart Dialog */}
             <Dialog open={cartOpen} onOpenChange={setCartOpen}>
-                <DialogContent className="max-w-md p-0">
+                <DialogContent className="max-w-md p-0 duration-300">
                     <div className="max-h-[80vh] overflow-hidden">
                         <Card className="w-full flex flex-col shadow-none border-0 rounded-none">
                             <div className="p-4 border-b bg-muted/20">

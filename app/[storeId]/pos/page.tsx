@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import { Search, Plus, Minus, Trash2, CreditCard, Utensils, Coffee, ListOrdered, Edit, Settings, Box, ShoppingCart } from "lucide-react"
-import { useMenu, MenuItem } from "@/hooks/use-menu"
-import { useOrders, Order, OrderItem } from "@/hooks/use-orders"
+import { useMenu, MenuItem, ModifierGroup, ModifierOption } from "@/hooks/use-menu"
+import { useOrders, Order, OrderItemModifierSelection } from "@/hooks/use-orders"
 import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -38,13 +38,57 @@ const newLineId = () => {
 
 type CartItem = MenuItem & { lineId: string; plate: number; quantity: number; notes: string; original_order_item_id?: string }
 
+type CartItemWithMods = CartItem & { modifiers?: OrderItemModifierSelection[] }
+
+const stableStringify = (value: unknown) => {
+    const seen = new WeakSet<object>()
+    const sorter = (v: unknown): unknown => {
+        if (v === null || typeof v !== 'object') return v
+        const obj = v as object
+        if (seen.has(obj)) return null
+        seen.add(obj)
+        if (Array.isArray(v)) return v.map(sorter)
+        const rec = v as Record<string, unknown>
+        const out: Record<string, unknown> = {}
+        for (const k of Object.keys(rec).sort()) out[k] = sorter(rec[k])
+        return out
+    }
+    return JSON.stringify(sorter(value))
+}
+
+const modifiersExtra = (mods: OrderItemModifierSelection[] | null | undefined) => {
+    const m = mods || []
+    let total = 0
+    for (const g of m) {
+        for (const s of g.selections || []) {
+            total += (s.price_delta || 0) * (s.quantity || 0)
+        }
+    }
+    return total
+}
+
+const cartItemUnitPrice = (item: CartItemWithMods) => (item.price || 0) + modifiersExtra(item.modifiers)
+
+const formatModifiersSummary = (mods: OrderItemModifierSelection[] | null | undefined) => {
+    const m = (mods || []).filter(g => (g.selections || []).length > 0)
+    if (m.length === 0) return ''
+    return m
+        .map(g => {
+            const parts = (g.selections || [])
+                .filter(s => (s.quantity || 0) > 0)
+                .map(s => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)
+            return `${g.group_name}: ${parts.join(', ')}`
+        })
+        .join(' • ')
+}
+
 export default function POSPage() {
     const { storeId } = useParams()
     const { menuItems, loading: loadingMenu } = useMenu(storeId as string)
     const { orders: activeOrders, refresh: refreshOrders, updateStatus } = useOrders(storeId as string)
 
     const [activeTab, setActiveTab] = useState<'menu' | 'orders' | 'history'>('menu')
-    const [cart, setCart] = useState<CartItem[]>([])
+    const [cart, setCart] = useState<CartItemWithMods[]>([])
     const [plateCount, setPlateCount] = useState(1)
     const [selectedPlate, setSelectedPlate] = useState(1)
     const [selectedCategory, setSelectedCategory] = useState<string>('All')
@@ -60,6 +104,11 @@ export default function POSPage() {
 
     const [submitting, setSubmitting] = useState(false)
     const [historyOrders, setHistoryOrders] = useState<Order[]>([])
+
+    // Configurable item state
+    const [configOpen, setConfigOpen] = useState(false)
+    const [configItem, setConfigItem] = useState<MenuItem | null>(null)
+    const [configCounts, setConfigCounts] = useState<Record<string, Record<string, number>>>({})
 
     // Fetch history
     useEffect(() => {
@@ -89,14 +138,39 @@ export default function POSPage() {
     })
 
     // Cart Logic
-    const addToCart = (item: MenuItem) => {
+    const addToCart = (item: MenuItem, modifiers?: OrderItemModifierSelection[]) => {
         setCart(prev => {
-            const existing = prev.find(i => i.id === item.id && i.plate === selectedPlate && i.notes === '')
+            const existing = prev.find(i =>
+                i.id === item.id &&
+                i.plate === selectedPlate &&
+                i.notes === '' &&
+                stableStringify(i.modifiers || []) === stableStringify(modifiers || [])
+            )
             if (existing) {
                 return prev.map(i => i.lineId === existing.lineId ? { ...i, quantity: i.quantity + 1 } : i)
             }
-            return [...prev, { ...item, lineId: newLineId(), plate: selectedPlate, quantity: 1, notes: '' }]
+            return [...prev, { ...item, lineId: newLineId(), plate: selectedPlate, quantity: 1, notes: '', modifiers: modifiers || [] }]
         })
+    }
+
+    const beginAddItem = (item: MenuItem) => {
+        const groups = (item.modifier_groups || []).filter(Boolean) as ModifierGroup[]
+        if (groups.length === 0) {
+            addToCart(item)
+            return
+        }
+
+        const initial: Record<string, Record<string, number>> = {}
+        for (const g of groups) {
+            initial[g.id] = {}
+            for (const o of (g.options || [])) {
+                initial[g.id][o.id] = 0
+            }
+        }
+
+        setConfigItem(item)
+        setConfigCounts(initial)
+        setConfigOpen(true)
     }
 
     const updateQuantity = (lineId: string, delta: number) => {
@@ -119,7 +193,13 @@ export default function POSPage() {
             const updated = prev.map(i => i.lineId === lineId ? { ...i, plate: nextPlate } : i)
             const moved = { ...moving, plate: nextPlate }
 
-            const duplicate = updated.find(i => i.lineId !== lineId && i.id === moved.id && i.plate === moved.plate && i.notes === moved.notes)
+            const duplicate = updated.find(i =>
+                i.lineId !== lineId &&
+                i.id === moved.id &&
+                i.plate === moved.plate &&
+                i.notes === moved.notes &&
+                stableStringify(i.modifiers || []) === stableStringify(moved.modifiers || [])
+            )
             if (!duplicate) return updated
 
             return updated
@@ -129,7 +209,7 @@ export default function POSPage() {
     }
 
     // Totals for Cart
-    const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0)
+    const subtotal = cart.reduce((acc, item) => acc + (cartItemUnitPrice(item) * item.quantity), 0)
     const total = subtotal
 
     // Submit / Update Order
@@ -168,7 +248,8 @@ export default function POSPage() {
 
                 existingItems?.forEach(item => {
                     const decoded = decodePlateNotes(item.notes)
-                    const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}`
+                    const dbMods = (item as unknown as { modifiers?: OrderItemModifierSelection[] }).modifiers || []
+                    const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}|${stableStringify(dbMods)}`
                     const list = existingMap.get(key) || []
                     list.push(item)
                     existingMap.set(key, list)
@@ -181,13 +262,14 @@ export default function POSPage() {
                     price_at_time: number
                     notes: string
                     status: 'active'
+                    modifiers?: OrderItemModifierSelection[]
                 }> = []
                 const itemsToUpdate: Array<{ id: string; quantity: number }> = []
                 const explicitCancels: string[] = []
 
                 // Process Cart Items
                 for (const cartItem of cart) {
-                    const key = `${cartItem.id}|${cartItem.plate}|${(cartItem.notes || '').trim()}`
+                    const key = `${cartItem.id}|${cartItem.plate}|${(cartItem.notes || '').trim()}|${stableStringify(cartItem.modifiers || [])}`
                     const currentItems = existingMap.get(key) || []
                     const currentQty = currentItems.reduce((sum, i) => sum + i.quantity, 0)
                     const targetQty = cartItem.quantity
@@ -200,9 +282,10 @@ export default function POSPage() {
                             order_id: orderId,
                             menu_item_id: cartItem.id,
                             quantity: diff,
-                            price_at_time: cartItem.price,
+                            price_at_time: cartItemUnitPrice(cartItem),
                             notes: encodePlateNotes(cartItem.plate, cartItem.notes),
-                            status: 'active'
+                            status: 'active',
+                            modifiers: cartItem.modifiers || []
                         })
                         // Existing rows remain touched (Served/Prepared)
                     } else if (diff < 0) {
@@ -271,9 +354,9 @@ export default function POSPage() {
                 orderId = orderData.id
 
                 // Insert Items
-                const grouped = new Map<string, { menu_item_id: string; quantity: number; price_at_time: number; notes: string }>()
+                const grouped = new Map<string, { menu_item_id: string; quantity: number; price_at_time: number; notes: string; modifiers: OrderItemModifierSelection[] }>()
                 for (const item of cart) {
-                    const key = `${item.id}|${item.plate}|${(item.notes || '').trim()}`
+                    const key = `${item.id}|${item.plate}|${(item.notes || '').trim()}|${stableStringify(item.modifiers || [])}`
                     const existing = grouped.get(key)
                     if (existing) {
                         existing.quantity += item.quantity
@@ -281,8 +364,9 @@ export default function POSPage() {
                         grouped.set(key, {
                             menu_item_id: item.id,
                             quantity: item.quantity,
-                            price_at_time: item.price,
+                            price_at_time: cartItemUnitPrice(item),
                             notes: encodePlateNotes(item.plate, item.notes),
+                            modifiers: item.modifiers || [],
                         })
                     }
                 }
@@ -293,7 +377,8 @@ export default function POSPage() {
                     quantity: g.quantity,
                     price_at_time: g.price_at_time,
                     notes: g.notes,
-                    status: 'active'
+                    status: 'active',
+                    modifiers: g.modifiers,
                 }))
 
                 const { error: itemsError } = await supabase.from('order_items').insert(orderItems)
@@ -323,7 +408,7 @@ export default function POSPage() {
 
     const handleEditOrder = (order: Order) => {
         // Aggregate items by menu_item_id + plate + notes
-        const aggregatedItems = new Map<string, CartItem>()
+        const aggregatedItems = new Map<string, CartItemWithMods>()
         let maxPlate = 1
 
         if (order.items) {
@@ -332,7 +417,7 @@ export default function POSPage() {
 
                 const decoded = decodePlateNotes(item.notes)
                 maxPlate = Math.max(maxPlate, decoded.plate)
-                const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}`
+                const key = `${item.menu_item_id}|${decoded.plate}|${decoded.notes.trim()}|${stableStringify(item.modifiers || [])}`
                 const existing = aggregatedItems.get(key)
                 if (existing) {
                     existing.quantity += item.quantity
@@ -347,6 +432,7 @@ export default function POSPage() {
                         plate: decoded.plate,
                         quantity: item.quantity,
                         notes: decoded.notes || '',
+                        modifiers: item.modifiers || [],
                     })
                 }
             })
@@ -513,7 +599,7 @@ export default function POSPage() {
                                     <Card
                                         key={item.id}
                                         className="cursor-pointer hover:border-primary/50 transition-colors active:scale-95"
-                                        onClick={() => addToCart(item)}
+                                        onClick={() => beginAddItem(item)}
                                     >
                                         <CardContent className="p-4 flex flex-col h-full gap-2">
                                             <div className="aspect-video rounded-md bg-muted/50 w-full mb-2 flex items-center justify-center text-muted-foreground">
@@ -548,7 +634,14 @@ export default function POSPage() {
                                     <div className="text-sm text-muted-foreground">#{order.order_number || order.id.slice(0, 4)}</div>
                                     <div className="mt-2 text-sm">
                                         {order.items?.map((item, i) => (
-                                            <div key={i}>{item.quantity}x {item.menu_items?.name}</div>
+                                            <div key={i} className="text-sm">
+                                                <div>{item.quantity}x {item.menu_items?.name}</div>
+                                                {formatModifiersSummary(item.modifiers) && (
+                                                    <div className="text-xs text-muted-foreground ml-4">
+                                                        {formatModifiersSummary(item.modifiers)}
+                                                    </div>
+                                                )}
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
@@ -602,7 +695,14 @@ export default function POSPage() {
                                     </div>
                                     <div className="mt-2 text-sm">
                                         {order.items?.map((item, i) => (
-                                            <div key={i}>{item.quantity}x {item.menu_items?.name}</div>
+                                            <div key={i} className="text-sm">
+                                                <div>{item.quantity}x {item.menu_items?.name}</div>
+                                                {formatModifiersSummary(item.modifiers) && (
+                                                    <div className="text-xs text-muted-foreground ml-4">
+                                                        {formatModifiersSummary(item.modifiers)}
+                                                    </div>
+                                                )}
+                                            </div>
                                         ))}
                                     </div>
                                 </div>
@@ -686,7 +786,7 @@ export default function POSPage() {
                             <div className="space-y-5">
                                 {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
                                     const plateItems = cart.filter(i => i.plate === plate)
-                                    const plateTotal = plateItems.reduce((acc, i) => acc + (i.price * i.quantity), 0)
+                                    const plateTotal = plateItems.reduce((acc, i) => acc + (cartItemUnitPrice(i) * i.quantity), 0)
 
                                     return (
                                         <div key={plate} className="space-y-2">
@@ -704,8 +804,13 @@ export default function POSPage() {
                                                             <div className="flex-1">
                                                                 <div className="flex justify-between font-medium text-sm">
                                                                     <span>{item.name}</span>
-                                                                    <span>{formatCurrency(item.price * item.quantity)}</span>
+                                                                    <span>{formatCurrency(cartItemUnitPrice(item) * item.quantity)}</span>
                                                                 </div>
+                                                                {formatModifiersSummary(item.modifiers) && (
+                                                                    <div className="text-xs text-muted-foreground mt-0.5">
+                                                                        {formatModifiersSummary(item.modifiers)}
+                                                                    </div>
+                                                                )}
                                                                 <div className="flex items-center gap-2 mt-1">
                                                                     <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
                                                                         <Minus className="w-3 h-3" />
@@ -833,7 +938,7 @@ export default function POSPage() {
                                     <div className="space-y-5">
                                         {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
                                             const plateItems = cart.filter(i => i.plate === plate)
-                                            const plateTotal = plateItems.reduce((acc, i) => acc + (i.price * i.quantity), 0)
+                                            const plateTotal = plateItems.reduce((acc, i) => acc + (cartItemUnitPrice(i) * i.quantity), 0)
 
                                             return (
                                                 <div key={plate} className="space-y-2">
@@ -851,8 +956,13 @@ export default function POSPage() {
                                                                     <div className="flex-1">
                                                                         <div className="flex justify-between font-medium text-sm">
                                                                             <span>{item.name}</span>
-                                                                            <span>{formatCurrency(item.price * item.quantity)}</span>
+                                                                            <span>{formatCurrency(cartItemUnitPrice(item) * item.quantity)}</span>
                                                                         </div>
+                                                                        {formatModifiersSummary(item.modifiers) && (
+                                                                            <div className="text-xs text-muted-foreground mt-0.5">
+                                                                                {formatModifiersSummary(item.modifiers)}
+                                                                            </div>
+                                                                        )}
                                                                         <div className="flex items-center gap-2 mt-1">
                                                                             <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
                                                                                 <Minus className="w-3 h-3" />
@@ -927,6 +1037,165 @@ export default function POSPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Configurable Item Dialog */}
+            <Dialog
+                open={configOpen}
+                onOpenChange={(open) => {
+                    setConfigOpen(open)
+                    if (!open) {
+                        setConfigItem(null)
+                        setConfigCounts({})
+                    }
+                }}
+            >
+                <DialogContent className="sm:max-w-[520px]">
+                    <DialogHeader>
+                        <DialogTitle>{configItem?.name || 'Customize item'}</DialogTitle>
+                        <DialogDescription>Select the required options to add this item.</DialogDescription>
+                    </DialogHeader>
+
+                    {(() => {
+                        const item = configItem
+                        const groups = (item?.modifier_groups || []).filter(Boolean) as ModifierGroup[]
+                        if (!item || groups.length === 0) {
+                            return <div className="text-sm text-muted-foreground">No customizable options.</div>
+                        }
+
+                        const groupTotals = new Map<string, number>()
+                        for (const g of groups) {
+                            const counts = configCounts[g.id] || {}
+                            groupTotals.set(g.id, Object.values(counts).reduce((a, b) => a + (b || 0), 0))
+                        }
+
+                        const isGroupSatisfied = (g: ModifierGroup) => {
+                            const totalSelected = groupTotals.get(g.id) || 0
+                            const min = typeof g.min === 'number' ? g.min : 0
+                            const max = typeof g.max === 'number' ? g.max : min
+                            if (min === max) return totalSelected === max
+                            return totalSelected >= min && totalSelected <= max
+                        }
+
+                        const allSatisfied = groups.every(isGroupSatisfied)
+
+                        const snapshot: OrderItemModifierSelection[] = groups.map((g: ModifierGroup) => {
+                            const counts = configCounts[g.id] || {}
+                            return {
+                                group_id: g.id,
+                                group_name: g.name,
+                                selections: (g.options || [])
+                                    .map((o: ModifierOption) => ({
+                                        option_id: o.id,
+                                        option_name: o.name,
+                                        price_delta: Number(o.price_delta || 0),
+                                        quantity: Number(counts[o.id] || 0),
+                                    }))
+                                    .filter((x) => x.quantity > 0)
+                            }
+                        })
+
+                        const extra = modifiersExtra(snapshot)
+                        const unit = (item.price || 0) + extra
+
+                        return (
+                            <div className="space-y-4">
+                                {groups.map((g: ModifierGroup) => {
+                                    const counts = configCounts[g.id] || {}
+                                    const totalSelected = groupTotals.get(g.id) || 0
+                                    const required = typeof g.max === 'number' ? g.max : (typeof g.min === 'number' ? g.min : 0)
+
+                                    return (
+                                        <div key={g.id} className="rounded-md border p-3 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <div className="font-medium">{g.name}</div>
+                                                    <div className="text-xs text-muted-foreground">Select exactly {required}</div>
+                                                </div>
+                                                <div className={cn("text-xs font-medium", totalSelected === required ? "text-green-600" : "text-muted-foreground")}>
+                                                    {totalSelected}/{required}
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                {(g.options || [])
+                                                    .filter((o: ModifierOption) => (o.available ?? true))
+                                                    .map((o: ModifierOption) => {
+                                                        const c = Number(counts[o.id] || 0)
+                                                        const canInc = totalSelected < required
+                                                        return (
+                                                            <div key={o.id} className="flex items-center justify-between gap-2">
+                                                                <div className="flex-1">
+                                                                    <div className="text-sm font-medium">{o.name}</div>
+                                                                    {!!Number(o.price_delta || 0) && (
+                                                                        <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="flex items-center gap-2">
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 rounded-full"
+                                                                        disabled={c <= 0}
+                                                                        onClick={() => {
+                                                                            setConfigCounts(prev => ({
+                                                                                ...prev,
+                                                                                [g.id]: { ...prev[g.id], [o.id]: Math.max(0, (prev[g.id]?.[o.id] || 0) - 1) }
+                                                                            }))
+                                                                        }}
+                                                                    >
+                                                                        <Minus className="w-3 h-3" />
+                                                                    </Button>
+                                                                    <div className="w-6 text-center text-sm">{c}</div>
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="outline"
+                                                                        size="icon"
+                                                                        className="h-7 w-7 rounded-full"
+                                                                        disabled={!canInc}
+                                                                        onClick={() => {
+                                                                            setConfigCounts(prev => ({
+                                                                                ...prev,
+                                                                                [g.id]: { ...prev[g.id], [o.id]: (prev[g.id]?.[o.id] || 0) + 1 }
+                                                                            }))
+                                                                        }}
+                                                                    >
+                                                                        <Plus className="w-3 h-3" />
+                                                                    </Button>
+                                                                </div>
+                                                            </div>
+                                                        )
+                                                    })}
+                                            </div>
+                                        </div>
+                                    )
+                                })}
+
+                                <div className="flex items-center justify-between text-sm">
+                                    <div className="text-muted-foreground">Unit price</div>
+                                    <div className="font-medium">{formatCurrency(unit)}</div>
+                                </div>
+
+                                <DialogFooter>
+                                    <Button type="button" variant="secondary" onClick={() => setConfigOpen(false)}>
+                                        Cancel
+                                    </Button>
+                                    <Button
+                                        type="button"
+                                        disabled={!allSatisfied}
+                                        onClick={() => {
+                                            addToCart(item, snapshot)
+                                            setConfigOpen(false)
+                                        }}
+                                    >
+                                        Add to cart
+                                    </Button>
+                                </DialogFooter>
+                            </div>
+                        )
+                    })()}
+                </DialogContent>
+            </Dialog>
+
             {/* Payment Dialog */}
             <Dialog open={!!paymentOrder} onOpenChange={(open) => !open && setPaymentOrder(null)}>
                 <DialogContent className="sm:max-w-md">
@@ -941,8 +1210,13 @@ export default function POSPage() {
                         {/* Mini Menu Summary */}
                         <div className="bg-muted/30 rounded-lg p-3 space-y-2 max-h-[200px] overflow-y-auto text-sm border">
                             {paymentOrder?.items?.map((item, idx) => (
-                                <div key={idx} className="flex justify-between">
-                                    <span>{item.quantity}x {item.menu_items?.name}</span>
+                                <div key={idx} className="flex justify-between gap-2">
+                                    <span>
+                                        {item.quantity}x {item.menu_items?.name}
+                                        {formatModifiersSummary(item.modifiers) && (
+                                            <span className="text-xs text-muted-foreground"> • {formatModifiersSummary(item.modifiers)}</span>
+                                        )}
+                                    </span>
                                     {/* Price? We assume price is in item from my hook, but hook might need fix to return price_at_time if separate. 
                           Wait, my hook `use-orders` returns `menu_items(name)`. `order_items` usually has price.
                           Let's assume we proceed without detailed item price here or add it to hook if critical.

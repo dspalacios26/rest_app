@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
+import type { OrderItemModifierSelection } from "@/hooks/use-orders"
 
 // Inline format helper if not in utils
 const formatMoney = (amount: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount)
@@ -18,6 +19,8 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8'];
 
 type OrderItem = {
     quantity: number
+    price_at_time?: number | null
+    modifiers?: OrderItemModifierSelection[]
     menu_items?: { name?: string | null } | null
 }
 
@@ -163,6 +166,7 @@ export default function AdminPage() {
           items:order_items (
             quantity,
             price_at_time,
+                        modifiers,
             menu_items (name)
           )
         `)
@@ -331,6 +335,31 @@ export default function AdminPage() {
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value)
             .slice(0, 5) // Top 5
+    }, [orders])
+
+    const topModifiersData = useMemo(() => {
+        // Aggregate option usage across all paid orders.
+        // Multiply by order_item.quantity because modifiers are per unit.
+        const counts: Record<string, number> = {}
+        for (const order of orders) {
+            for (const item of order.items || []) {
+                const unitQty = item.quantity || 0
+                const groups = item.modifiers || []
+                for (const g of groups) {
+                    for (const s of (g?.selections || [])) {
+                        const name = s?.option_name
+                        if (!name) continue
+                        const c = (s?.quantity || 0) * unitQty
+                        if (c <= 0) continue
+                        counts[name] = (counts[name] || 0) + c
+                    }
+                }
+            }
+        }
+        return Object.entries(counts)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 8)
     }, [orders])
 
     if (!isAuthenticated) {
@@ -618,6 +647,24 @@ export default function AdminPage() {
                             </div>
                         </CardContent>
                     </Card>
+
+                    {/* Top Modifiers */}
+                    {topModifiersData.length > 0 && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Top Modifiers</CardTitle>
+                                <CardDescription>Most selected options (e.g., meats)</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-2 text-sm">
+                                {topModifiersData.map((m) => (
+                                    <div key={m.name} className="flex items-center justify-between">
+                                        <div className="font-medium">{m.name}</div>
+                                        <div className="text-muted-foreground">{m.value}</div>
+                                    </div>
+                                ))}
+                            </CardContent>
+                        </Card>
+                    )}
                 </div>
             </div>
         </div>

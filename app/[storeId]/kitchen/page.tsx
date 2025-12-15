@@ -2,7 +2,7 @@
 
 import { useParams } from "next/navigation"
 import { CheckCircle2, Clock, ChefHat, AlertCircle, Trash2, RotateCcw } from "lucide-react"
-import { useOrders, Order } from "@/hooks/use-orders"
+import { useOrders, Order, OrderItem, OrderItemModifierSelection } from "@/hooks/use-orders"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
@@ -91,8 +91,8 @@ const getPlateNumber = (notes: string | null | undefined) => {
     return Math.max(1, parseInt(m[1] || "1", 10) || 1)
 }
 
-const groupByPlate = (items: any[]) => {
-    const grouped = new Map<number, any[]>()
+const groupByPlate = (items: OrderItem[]) => {
+    const grouped = new Map<number, OrderItem[]>()
     for (const item of items) {
         const plate = getPlateNumber(item.notes)
         const list = grouped.get(plate) || []
@@ -102,7 +102,20 @@ const groupByPlate = (items: any[]) => {
     return Array.from(grouped.entries()).sort(([a], [b]) => a - b)
 }
 
-function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpdate: any, colId: string }) {
+const formatModifiersSummary = (mods: OrderItemModifierSelection[] | null | undefined) => {
+    const m = (mods || []).filter((g) => (g?.selections || []).length > 0)
+    if (m.length === 0) return ""
+    return m
+        .map((g) => {
+            const parts = (g.selections || [])
+                .filter((s) => (s.quantity || 0) > 0)
+                .map((s) => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)
+            return `${g.group_name}: ${parts.join(', ')}`
+        })
+        .join(' • ')
+}
+
+function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpdate: (orderId: string, newStatus: Order['status']) => void, colId: string }) {
     const isModified = false; // Logic for detecting modification could be added here based on timestamp vs last_viewed
 
     return (
@@ -138,10 +151,10 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                 {(() => {
                     // Logic to split items
                     const items = order.items || []
-                    const isCancelled = (item: any) => item.status === 'cancelled'
+                    const isCancelled = (item: OrderItem) => item.status === 'cancelled'
 
                     // "New" items: Not cancelled + created > 2s after order
-                    const isNew = (item: any) => {
+                    const isNew = (item: OrderItem) => {
                         if (item.status === 'cancelled') return false
                         const itemTime = item.created_at ? new Date(item.created_at).getTime() : 0
                         const orderTime = new Date(order.created_at).getTime()
@@ -163,9 +176,16 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                             <div key={plate} className="space-y-1">
                                                 <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
                                                 {items.map((item, idx) => (
-                                                    <div key={idx} className="flex justify-between text-sm font-medium">
-                                                        <span>{item.quantity}x {item.menu_items?.name}</span>
-                                                        {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                    <div key={idx} className="space-y-0.5">
+                                                        <div className="flex justify-between text-sm font-medium">
+                                                            <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                            {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                        </div>
+                                                        {formatModifiersSummary(item.modifiers) && (
+                                                            <div className="text-xs text-muted-foreground ml-4">
+                                                                {formatModifiersSummary(item.modifiers)}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
@@ -182,9 +202,16 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                         <div key={plate} className="space-y-1">
                                             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
                                             {items.map((item, idx) => (
-                                                <div key={idx} className="flex justify-between text-sm">
-                                                    <span>{item.quantity}x {item.menu_items?.name}</span>
-                                                    {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                <div key={idx} className="space-y-0.5">
+                                                    <div className="flex justify-between text-sm">
+                                                        <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                        {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
+                                                    </div>
+                                                    {formatModifiersSummary(item.modifiers) && (
+                                                        <div className="text-xs text-muted-foreground ml-4">
+                                                            {formatModifiersSummary(item.modifiers)}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
@@ -200,8 +227,15 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                         <div key={plate} className="space-y-1">
                                             <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Plate {plate}</div>
                                             {items.map((item, idx) => (
-                                                <div key={idx} className="flex justify-between text-sm text-muted-foreground line-through opacity-70">
-                                                    <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                <div key={idx} className="space-y-0.5 text-muted-foreground line-through opacity-70">
+                                                    <div className="flex justify-between text-sm">
+                                                        <span>{item.quantity}x {item.menu_items?.name}</span>
+                                                    </div>
+                                                    {formatModifiersSummary(item.modifiers) && (
+                                                        <div className="text-xs ml-4">
+                                                            {formatModifiersSummary(item.modifiers)}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>

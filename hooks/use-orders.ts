@@ -3,11 +3,24 @@
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 
+export type OrderItemModifierSelection = {
+    group_id: string
+    group_name: string
+    selections: Array<{
+        option_id: string
+        option_name: string
+        price_delta: number
+        quantity: number
+    }>
+}
+
 export type OrderItem = {
     id: string
     menu_item_id: string
     quantity: number
     notes: string
+    price_at_time?: number
+    modifiers?: OrderItemModifierSelection[]
     status?: 'active' | 'cancelled'
     created_at?: string
     menu_items: {
@@ -72,7 +85,9 @@ export function useOrders(storeId: string) {
             id,
             menu_item_id,
             quantity,
+                        price_at_time,
             notes,
+                        modifiers,
             status,
             created_at,
             menu_items (
@@ -88,7 +103,7 @@ export function useOrders(storeId: string) {
             if (error) {
                 console.error('Error fetching orders:', error)
             } else {
-                setOrders(data as any || [])
+                setOrders((data as Order[]) || [])
             }
         } catch (error) {
             console.error('Error in fetchOrders:', error)

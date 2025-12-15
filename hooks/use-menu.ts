@@ -3,6 +3,22 @@
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
 
+export type ModifierOption = {
+    id: string
+    name: string
+    price_delta?: number
+    available?: boolean
+}
+
+export type ModifierGroup = {
+    id: string
+    name: string
+    min: number
+    max: number
+    allow_duplicates?: boolean
+    options: ModifierOption[]
+}
+
 export type MenuItem = {
     id: string
     name: string
@@ -11,9 +27,10 @@ export type MenuItem = {
     category: string
     available: boolean
     image_url?: string
+    modifier_groups?: ModifierGroup[]
 }
 
-export function useMenu(storeId: string) {
+export function useMenu(storeId: string, opts?: { includeUnavailable?: boolean }) {
     const [menuItems, setMenuItems] = useState<MenuItem[]>([])
     const [loading, setLoading] = useState(true)
 
@@ -24,17 +41,22 @@ export function useMenu(storeId: string) {
 
     const fetchMenu = async () => {
         try {
-            const { data, error } = await supabase
+            let q = supabase
                 .from('menu_items')
                 .select('*')
                 .eq('store_id', storeId)
-                .eq('available', true)
                 .order('category', { ascending: true })
+
+            if (!opts?.includeUnavailable) {
+                q = q.eq('available', true)
+            }
+
+            const { data, error } = await q
 
             if (error) {
                 console.error('Error fetching menu:', error)
             } else {
-                setMenuItems(data as any || [])
+                setMenuItems((data as MenuItem[]) || [])
             }
         } catch (error) {
             console.error('Error in fetchMenu:', error)

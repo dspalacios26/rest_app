@@ -103,10 +103,25 @@ const groupByPlate = (items: OrderItem[]) => {
 }
 
 const formatModifiersSummary = (mods: OrderItemModifierSelection[] | null | undefined) => {
-    const m = (mods || []).filter((g) => (g?.selections || []).length > 0)
+    const m = (mods || []).filter((g) => {
+        if ((g?.mode || 'count') === 'per_piece') {
+            return (g.pieces || []).some(p => (p.selections || []).some(s => (s.quantity || 0) > 0))
+        }
+        return (g?.selections || []).some(s => (s.quantity || 0) > 0)
+    })
     if (m.length === 0) return ""
     return m
         .map((g) => {
+            if ((g?.mode || 'count') === 'per_piece') {
+                const pieces = (g.pieces || []).map(p => {
+                    const parts = (p.selections || [])
+                        .filter((s) => (s.quantity || 0) > 0)
+                        .map((s) => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)
+                    return `${p.label}: ${parts.join(', ')}`
+                })
+                return `${g.group_name}: ${pieces.join(' • ')}`
+            }
+
             const parts = (g.selections || [])
                 .filter((s) => (s.quantity || 0) > 0)
                 .map((s) => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)

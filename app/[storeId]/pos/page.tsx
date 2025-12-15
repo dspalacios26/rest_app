@@ -60,8 +60,16 @@ const modifiersExtra = (mods: OrderItemModifierSelection[] | null | undefined) =
     const m = mods || []
     let total = 0
     for (const g of m) {
-        for (const s of g.selections || []) {
-            total += (s.price_delta || 0) * (s.quantity || 0)
+        if ((g.mode || 'count') === 'per_piece') {
+            for (const p of g.pieces || []) {
+                for (const s of p.selections || []) {
+                    total += (s.price_delta || 0) * (s.quantity || 0)
+                }
+            }
+        } else {
+            for (const s of g.selections || []) {
+                total += (s.price_delta || 0) * (s.quantity || 0)
+            }
         }
     }
     return total
@@ -70,10 +78,25 @@ const modifiersExtra = (mods: OrderItemModifierSelection[] | null | undefined) =
 const cartItemUnitPrice = (item: CartItemWithMods) => (item.price || 0) + modifiersExtra(item.modifiers)
 
 const formatModifiersSummary = (mods: OrderItemModifierSelection[] | null | undefined) => {
-    const m = (mods || []).filter(g => (g.selections || []).length > 0)
+    const m = (mods || []).filter(g => {
+        if ((g.mode || 'count') === 'per_piece') {
+            return (g.pieces || []).some(p => (p.selections || []).some(s => (s.quantity || 0) > 0))
+        }
+        return (g.selections || []).some(s => (s.quantity || 0) > 0)
+    })
     if (m.length === 0) return ''
     return m
         .map(g => {
+            if ((g.mode || 'count') === 'per_piece') {
+                const pieces = (g.pieces || []).map(p => {
+                    const parts = (p.selections || [])
+                        .filter(s => (s.quantity || 0) > 0)
+                        .map(s => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)
+                    return `${p.label}: ${parts.join(', ')}`
+                })
+                return `${g.group_name}: ${pieces.join(' • ')}`
+            }
+
             const parts = (g.selections || [])
                 .filter(s => (s.quantity || 0) > 0)
                 .map(s => (s.quantity || 0) > 1 ? `${s.option_name} x${s.quantity}` : s.option_name)
@@ -109,6 +132,7 @@ export default function POSPage() {
     const [configOpen, setConfigOpen] = useState(false)
     const [configItem, setConfigItem] = useState<MenuItem | null>(null)
     const [configCounts, setConfigCounts] = useState<Record<string, Record<string, number>>>({})
+    const [configPieces, setConfigPieces] = useState<Record<string, string[][]>>({})
 
     // Fetch history
     useEffect(() => {
@@ -161,15 +185,22 @@ export default function POSPage() {
         }
 
         const initial: Record<string, Record<string, number>> = {}
+        const initialPieces: Record<string, string[][]> = {}
         for (const g of groups) {
             initial[g.id] = {}
             for (const o of (g.options || [])) {
                 initial[g.id][o.id] = 0
             }
+
+            if ((g.mode || 'count') === 'per_piece') {
+                const pieceCount = Math.max(1, (g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1) as number)
+                initialPieces[g.id] = Array.from({ length: pieceCount }, () => [])
+            }
         }
 
         setConfigItem(item)
         setConfigCounts(initial)
+        setConfigPieces(initialPieces)
         setConfigOpen(true)
     }
 
@@ -1045,6 +1076,7 @@ export default function POSPage() {
                     if (!open) {
                         setConfigItem(null)
                         setConfigCounts({})
+                        setConfigPieces({})
                     }
                 }}
             >
@@ -1061,13 +1093,23 @@ export default function POSPage() {
                             return <div className="text-sm text-muted-foreground">No customizable options.</div>
                         }
 
+                        const isPerPieceGroup = (g: ModifierGroup) => (g.mode || 'count') === 'per_piece'
+
                         const groupTotals = new Map<string, number>()
                         for (const g of groups) {
+                            if (isPerPieceGroup(g)) continue
                             const counts = configCounts[g.id] || {}
                             groupTotals.set(g.id, Object.values(counts).reduce((a, b) => a + (b || 0), 0))
                         }
 
                         const isGroupSatisfied = (g: ModifierGroup) => {
+                            if (isPerPieceGroup(g)) {
+                                const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
+                                const pieces = configPieces[g.id] || []
+                                if (pieces.length !== pieceCount) return false
+                                return pieces.every((piece) => (piece?.length || 0) >= minPerPiece)
+                            }
                             const totalSelected = groupTotals.get(g.id) || 0
                             const min = typeof g.min === 'number' ? g.min : 0
                             const max = typeof g.max === 'number' ? g.max : min
@@ -1078,10 +1120,41 @@ export default function POSPage() {
                         const allSatisfied = groups.every(isGroupSatisfied)
 
                         const snapshot: OrderItemModifierSelection[] = groups.map((g: ModifierGroup) => {
+                            if (isPerPieceGroup(g)) {
+                                const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
+                                const piecesRaw = configPieces[g.id] || []
+                                const pieces = Array.from({ length: pieceCount }, (_, i) => {
+                                    const ids = piecesRaw[i] || []
+                                    const perOption: Record<string, number> = {}
+                                    for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
+                                    return {
+                                        label: `${labelBase} ${i + 1}`,
+                                        selections: (g.options || [])
+                                            .map((o: ModifierOption) => ({
+                                                option_id: o.id,
+                                                option_name: o.name,
+                                                price_delta: Number(o.price_delta || 0),
+                                                quantity: Number(perOption[o.id] || 0),
+                                            }))
+                                            .filter((x) => x.quantity > 0),
+                                    }
+                                })
+
+                                return {
+                                    group_id: g.id,
+                                    group_name: g.name,
+                                    mode: 'per_piece',
+                                    pieces,
+                                    selections: [],
+                                }
+                            }
+
                             const counts = configCounts[g.id] || {}
                             return {
                                 group_id: g.id,
                                 group_name: g.name,
+                                mode: 'count',
                                 selections: (g.options || [])
                                     .map((o: ModifierOption) => ({
                                         option_id: o.id,
@@ -1089,7 +1162,7 @@ export default function POSPage() {
                                         price_delta: Number(o.price_delta || 0),
                                         quantity: Number(counts[o.id] || 0),
                                     }))
-                                    .filter((x) => x.quantity > 0)
+                                    .filter((x) => x.quantity > 0),
                             }
                         })
 
@@ -1099,6 +1172,114 @@ export default function POSPage() {
                         return (
                             <div className="space-y-4">
                                 {groups.map((g: ModifierGroup) => {
+                                    if (isPerPieceGroup(g)) {
+                                        const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                        const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
+                                        const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
+                                        const pieces = configPieces[g.id] || []
+                                        const satisfiedCount = pieces.filter(p => (p?.length || 0) >= minPerPiece).length
+
+                                        const ruleText = `Pick at least ${minPerPiece} per ${labelBase}`
+                                        const statusTone = satisfiedCount === pieceCount ? "text-green-600" : "text-amber-600"
+
+                                        return (
+                                            <div key={g.id} className="rounded-md border p-3 space-y-3">
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <div className="font-medium">{g.name}</div>
+                                                        <div className="text-xs text-muted-foreground">{ruleText}</div>
+                                                    </div>
+                                                    <div className={cn("text-xs font-medium", statusTone)}>
+                                                        {Math.min(satisfiedCount, pieceCount)}/{pieceCount}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-3">
+                                                    {Array.from({ length: pieceCount }, (_, pieceIdx) => {
+                                                        const ids = pieces[pieceIdx] || []
+                                                        const perOption: Record<string, number> = {}
+                                                        for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
+                                                        const pieceSelected = ids.length
+                                                        const pieceTone = pieceSelected >= minPerPiece ? "text-green-600" : "text-amber-600"
+                                                        return (
+                                                            <div key={pieceIdx} className="rounded-md border bg-muted/20 p-2 space-y-2">
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="text-sm font-medium">{labelBase} {pieceIdx + 1}</div>
+                                                                    <div className={cn("text-xs font-medium", pieceTone)}>
+                                                                        {pieceSelected}/{minPerPiece}
+                                                                    </div>
+                                                                </div>
+
+                                                                <div className="space-y-2">
+                                                                    {(g.options || [])
+                                                                        .filter((o: ModifierOption) => (o.available ?? true))
+                                                                        .map((o: ModifierOption) => {
+                                                                            const c = Number(perOption[o.id] || 0)
+                                                                            return (
+                                                                                <div key={o.id} className="flex items-center justify-between gap-2">
+                                                                                    <div className="flex-1">
+                                                                                        <div className="text-sm font-medium">{o.name}</div>
+                                                                                        {!!Number(o.price_delta || 0) && (
+                                                                                            <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-2">
+                                                                                        <Button
+                                                                                            type="button"
+                                                                                            variant="outline"
+                                                                                            size="icon"
+                                                                                            className="h-7 w-7 rounded-full"
+                                                                                            disabled={c <= 0}
+                                                                                            onClick={() => {
+                                                                                                setConfigPieces(prev => {
+                                                                                                    const next = { ...prev }
+                                                                                                    const arr = (next[g.id] || []).map(p => [...p])
+                                                                                                    const before = arr[pieceIdx] || []
+                                                                                                    const idx = before.lastIndexOf(o.id)
+                                                                                                    if (idx >= 0) {
+                                                                                                        before.splice(idx, 1)
+                                                                                                    }
+                                                                                                    arr[pieceIdx] = before
+                                                                                                    next[g.id] = arr
+                                                                                                    return next
+                                                                                                })
+                                                                                            }}
+                                                                                        >
+                                                                                            <Minus className="w-3 h-3" />
+                                                                                        </Button>
+                                                                                        <div className="w-6 text-center text-sm">{c}</div>
+                                                                                        <Button
+                                                                                            type="button"
+                                                                                            variant="outline"
+                                                                                            size="icon"
+                                                                                            className="h-7 w-7 rounded-full"
+                                                                                            onClick={() => {
+                                                                                                setConfigPieces(prev => {
+                                                                                                    const next = { ...prev }
+                                                                                                    const arr = (next[g.id] || []).map(p => [...p])
+                                                                                                    const before = arr[pieceIdx] || []
+                                                                                                    before.push(o.id)
+                                                                                                    arr[pieceIdx] = before
+                                                                                                    next[g.id] = arr
+                                                                                                    return next
+                                                                                                })
+                                                                                            }}
+                                                                                        >
+                                                                                            <Plus className="w-3 h-3" />
+                                                                                        </Button>
+                                                                                    </div>
+                                                                                </div>
+                                                                            )
+                                                                        })}
+                                                                </div>
+                                                            </div>
+                                                        )
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )
+                                    }
+
                                     const counts = configCounts[g.id] || {}
                                     const totalSelected = groupTotals.get(g.id) || 0
                                     const min = typeof g.min === 'number' ? g.min : 0

@@ -16,6 +16,13 @@ export type ModifierGroup = {
     min: number
     max: number
     allow_duplicates?: boolean
+    // Optional advanced behavior stored in JSON.
+    // - count: use min/max across the whole item (current behavior)
+    // - per_piece: configure selections per piece (e.g., Taco 1..N), where max is commonly used as the piece count
+    mode?: 'count' | 'per_piece'
+    piece_label?: string
+    piece_count?: number
+    min_per_piece?: number
     options: ModifierOption[]
 }
 

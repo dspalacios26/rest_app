@@ -219,45 +219,107 @@ export function MenuManager({ storeId }: { storeId: string }) {
                                                     </Button>
                                                 </div>
 
-                                                <div className="grid grid-cols-3 gap-3">
-                                                    <div>
-                                                        <Label className="text-xs">Min</Label>
-                                                        <Input
-                                                            type="number"
-                                                            min={0}
-                                                            value={Number.isFinite(g.min) ? g.min : 0}
+                                                <div className="space-y-3">
+                                                    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={(g.mode || 'count') === 'per_piece'}
                                                             onChange={(e) => {
-                                                                const nextMin = Math.max(0, parseInt(e.target.value || '0', 10) || 0)
-                                                                const nextMax = Math.max(nextMin, Number.isFinite(g.max) ? g.max : nextMin)
-                                                                updateGroup(g.id, { min: nextMin, max: nextMax })
+                                                                const checked = e.target.checked
+                                                                if (checked) {
+                                                                    updateGroup(g.id, {
+                                                                        mode: 'per_piece',
+                                                                        piece_label: g.piece_label || 'Taco',
+                                                                        piece_count: g.piece_count || (Number.isFinite(g.max) ? g.max : 4),
+                                                                        min_per_piece: g.min_per_piece ?? 1,
+                                                                    })
+                                                                } else {
+                                                                    updateGroup(g.id, { mode: 'count' })
+                                                                }
                                                             }}
-                                                            className="mt-1"
                                                         />
-                                                    </div>
-                                                    <div>
-                                                        <Label className="text-xs">Max</Label>
-                                                        <Input
-                                                            type="number"
-                                                            min={0}
-                                                            value={Number.isFinite(g.max) ? g.max : (Number.isFinite(g.min) ? g.min : 0)}
-                                                            onChange={(e) => {
-                                                                const currentMin = Number.isFinite(g.min) ? g.min : 0
-                                                                const nextMax = Math.max(currentMin, Math.max(0, parseInt(e.target.value || '0', 10) || 0))
-                                                                updateGroup(g.id, { min: currentMin, max: nextMax })
-                                                            }}
-                                                            className="mt-1"
-                                                        />
-                                                    </div>
-                                                    <div className="flex items-end gap-2">
-                                                        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={g.allow_duplicates ?? true}
-                                                                onChange={(e) => updateGroup(g.id, { allow_duplicates: e.target.checked })}
-                                                            />
-                                                            Allow duplicates
-                                                        </label>
-                                                    </div>
+                                                        Configure per piece (e.g., Taco 1..N)
+                                                    </label>
+
+                                                    {(g.mode || 'count') === 'per_piece' ? (
+                                                        <div className="grid grid-cols-3 gap-3">
+                                                            <div>
+                                                                <Label className="text-xs">Piece label</Label>
+                                                                <Input
+                                                                    value={g.piece_label || 'Taco'}
+                                                                    onChange={(e) => updateGroup(g.id, { piece_label: e.target.value })}
+                                                                    className="mt-1"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <Label className="text-xs">Piece count</Label>
+                                                                <Input
+                                                                    type="number"
+                                                                    min={1}
+                                                                    value={g.piece_count ?? (Number.isFinite(g.max) ? g.max : 1)}
+                                                                    onChange={(e) => {
+                                                                        const n = Math.max(1, parseInt(e.target.value || '1', 10) || 1)
+                                                                        updateGroup(g.id, { piece_count: n })
+                                                                    }}
+                                                                    className="mt-1"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <Label className="text-xs">Min per piece</Label>
+                                                                <Input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    value={g.min_per_piece ?? 1}
+                                                                    onChange={(e) => {
+                                                                        const n = Math.max(0, parseInt(e.target.value || '0', 10) || 0)
+                                                                        updateGroup(g.id, { min_per_piece: n })
+                                                                    }}
+                                                                    className="mt-1"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="grid grid-cols-3 gap-3">
+                                                            <div>
+                                                                <Label className="text-xs">Min</Label>
+                                                                <Input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    value={Number.isFinite(g.min) ? g.min : 0}
+                                                                    onChange={(e) => {
+                                                                        const nextMin = Math.max(0, parseInt(e.target.value || '0', 10) || 0)
+                                                                        const nextMax = Math.max(nextMin, Number.isFinite(g.max) ? g.max : nextMin)
+                                                                        updateGroup(g.id, { min: nextMin, max: nextMax })
+                                                                    }}
+                                                                    className="mt-1"
+                                                                />
+                                                            </div>
+                                                            <div>
+                                                                <Label className="text-xs">Max</Label>
+                                                                <Input
+                                                                    type="number"
+                                                                    min={0}
+                                                                    value={Number.isFinite(g.max) ? g.max : (Number.isFinite(g.min) ? g.min : 0)}
+                                                                    onChange={(e) => {
+                                                                        const currentMin = Number.isFinite(g.min) ? g.min : 0
+                                                                        const nextMax = Math.max(currentMin, Math.max(0, parseInt(e.target.value || '0', 10) || 0))
+                                                                        updateGroup(g.id, { min: currentMin, max: nextMax })
+                                                                    }}
+                                                                    className="mt-1"
+                                                                />
+                                                            </div>
+                                                            <div className="flex items-end gap-2">
+                                                                <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={g.allow_duplicates ?? true}
+                                                                        onChange={(e) => updateGroup(g.id, { allow_duplicates: e.target.checked })}
+                                                                    />
+                                                                    Allow duplicates
+                                                                </label>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
 
                                                 <div className="space-y-2">

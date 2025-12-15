@@ -346,12 +346,24 @@ export default function AdminPage() {
                 const unitQty = item.quantity || 0
                 const groups = item.modifiers || []
                 for (const g of groups) {
-                    for (const s of (g?.selections || [])) {
-                        const name = s?.option_name
-                        if (!name) continue
-                        const c = (s?.quantity || 0) * unitQty
-                        if (c <= 0) continue
-                        counts[name] = (counts[name] || 0) + c
+                    if ((g?.mode || 'count') === 'per_piece') {
+                        for (const p of g.pieces || []) {
+                            for (const s of p.selections || []) {
+                                const name = s?.option_name
+                                if (!name) continue
+                                const c = (s?.quantity || 0) * unitQty
+                                if (c <= 0) continue
+                                counts[name] = (counts[name] || 0) + c
+                            }
+                        }
+                    } else {
+                        for (const s of (g?.selections || [])) {
+                            const name = s?.option_name
+                            if (!name) continue
+                            const c = (s?.quantity || 0) * unitQty
+                            if (c <= 0) continue
+                            counts[name] = (counts[name] || 0) + c
+                        }
                     }
                 }
             }

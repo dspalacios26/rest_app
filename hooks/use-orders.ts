@@ -6,6 +6,16 @@ import { supabase } from "@/lib/supabase"
 export type OrderItemModifierSelection = {
     group_id: string
     group_name: string
+    mode?: 'count' | 'per_piece'
+    pieces?: Array<{
+        label: string
+        selections: Array<{
+            option_id: string
+            option_name: string
+            price_delta: number
+            quantity: number
+        }>
+    }>
     selections: Array<{
         option_id: string
         option_name: string

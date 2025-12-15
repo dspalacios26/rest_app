@@ -1080,18 +1080,19 @@ export default function POSPage() {
                     }
                 }}
             >
-                <DialogContent className="sm:max-w-[520px]">
+                <DialogContent className="sm:max-w-[520px] max-h-[85vh] overflow-hidden flex flex-col">
                     <DialogHeader>
                         <DialogTitle>{configItem?.name || 'Customize item'}</DialogTitle>
                         <DialogDescription>Select the required options to add this item.</DialogDescription>
                     </DialogHeader>
 
-                    {(() => {
-                        const item = configItem
-                        const groups = (item?.modifier_groups || []).filter(Boolean) as ModifierGroup[]
-                        if (!item || groups.length === 0) {
-                            return <div className="text-sm text-muted-foreground">No customizable options.</div>
-                        }
+                    <div className="flex-1 overflow-y-auto pr-2">
+                        {(() => {
+                            const item = configItem
+                            const groups = (item?.modifier_groups || []).filter(Boolean) as ModifierGroup[]
+                            if (!item || groups.length === 0) {
+                                return <div className="text-sm text-muted-foreground">No customizable options.</div>
+                            }
 
                         const isPerPieceGroup = (g: ModifierGroup) => (g.mode || 'count') === 'per_piece'
 
@@ -1169,8 +1170,8 @@ export default function POSPage() {
                         const extra = modifiersExtra(snapshot)
                         const unit = (item.price || 0) + extra
 
-                        return (
-                            <div className="space-y-4">
+                            return (
+                                <div className="space-y-4">
                                 {groups.map((g: ModifierGroup) => {
                                     if (isPerPieceGroup(g)) {
                                         const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
@@ -1394,9 +1395,10 @@ export default function POSPage() {
                                         Add to cart
                                     </Button>
                                 </DialogFooter>
-                            </div>
-                        )
-                    })()}
+                                </div>
+                            )
+                        })()}
+                    </div>
                 </DialogContent>
             </Dialog>
 

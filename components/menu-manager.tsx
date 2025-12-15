@@ -16,7 +16,7 @@ const newId = () => {
 }
 
 export function MenuManager({ storeId }: { storeId: string }) {
-    const { menuItems, upsertItem, deleteItem } = useMenu(storeId, { includeUnavailable: true })
+    const { menuItems, upsertItem, deleteItem } = useMenu(storeId)
     const [isOpen, setIsOpen] = useState(false)
     const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null)
 

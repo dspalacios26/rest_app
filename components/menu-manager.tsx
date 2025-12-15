@@ -221,19 +221,34 @@ export function MenuManager({ storeId }: { storeId: string }) {
 
                                                 <div className="grid grid-cols-3 gap-3">
                                                     <div>
-                                                        <Label className="text-xs">Exact count</Label>
+                                                        <Label className="text-xs">Min</Label>
                                                         <Input
                                                             type="number"
                                                             min={0}
-                                                            value={Number.isFinite(g.max) ? g.max : 0}
+                                                            value={Number.isFinite(g.min) ? g.min : 0}
                                                             onChange={(e) => {
-                                                                const n = Math.max(0, parseInt(e.target.value || '0', 10) || 0)
-                                                                updateGroup(g.id, { min: n, max: n })
+                                                                const nextMin = Math.max(0, parseInt(e.target.value || '0', 10) || 0)
+                                                                const nextMax = Math.max(nextMin, Number.isFinite(g.max) ? g.max : nextMin)
+                                                                updateGroup(g.id, { min: nextMin, max: nextMax })
                                                             }}
                                                             className="mt-1"
                                                         />
                                                     </div>
-                                                    <div className="col-span-2 flex items-end gap-2">
+                                                    <div>
+                                                        <Label className="text-xs">Max</Label>
+                                                        <Input
+                                                            type="number"
+                                                            min={0}
+                                                            value={Number.isFinite(g.max) ? g.max : (Number.isFinite(g.min) ? g.min : 0)}
+                                                            onChange={(e) => {
+                                                                const currentMin = Number.isFinite(g.min) ? g.min : 0
+                                                                const nextMax = Math.max(currentMin, Math.max(0, parseInt(e.target.value || '0', 10) || 0))
+                                                                updateGroup(g.id, { min: currentMin, max: nextMax })
+                                                            }}
+                                                            className="mt-1"
+                                                        />
+                                                    </div>
+                                                    <div className="flex items-end gap-2">
                                                         <label className="flex items-center gap-2 text-xs text-muted-foreground">
                                                             <input
                                                                 type="checkbox"

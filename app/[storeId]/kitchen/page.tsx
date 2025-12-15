@@ -182,7 +182,7 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                                             {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
                                                         </div>
                                                         {formatModifiersSummary(item.modifiers) && (
-                                                            <div className="text-xs text-muted-foreground ml-4">
+                                                            <div className="text-xs text-foreground ml-4 font-medium">
                                                                 {formatModifiersSummary(item.modifiers)}
                                                             </div>
                                                         )}
@@ -208,7 +208,7 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                                         {item.notes && <span className="text-xs text-muted-foreground italic truncate max-w-[80px]">{stripPlateMarker(item.notes)}</span>}
                                                     </div>
                                                     {formatModifiersSummary(item.modifiers) && (
-                                                        <div className="text-xs text-muted-foreground ml-4">
+                                                        <div className="text-xs text-foreground ml-4 font-medium">
                                                             {formatModifiersSummary(item.modifiers)}
                                                         </div>
                                                     )}
@@ -232,7 +232,7 @@ function OrderCard({ order, onStatusUpdate, colId }: { order: Order, onStatusUpd
                                                         <span>{item.quantity}x {item.menu_items?.name}</span>
                                                     </div>
                                                     {formatModifiersSummary(item.modifiers) && (
-                                                        <div className="text-xs ml-4">
+                                                        <div className="text-xs ml-4 text-foreground font-medium">
                                                             {formatModifiersSummary(item.modifiers)}
                                                         </div>
                                                     )}

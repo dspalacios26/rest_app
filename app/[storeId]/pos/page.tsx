@@ -1101,17 +1101,40 @@ export default function POSPage() {
                                 {groups.map((g: ModifierGroup) => {
                                     const counts = configCounts[g.id] || {}
                                     const totalSelected = groupTotals.get(g.id) || 0
-                                    const required = typeof g.max === 'number' ? g.max : (typeof g.min === 'number' ? g.min : 0)
+                                    const min = typeof g.min === 'number' ? g.min : 0
+                                    const max = typeof g.max === 'number' ? g.max : min
+
+                                    const ruleText = (() => {
+                                        if (min === max) return `Select exactly ${max}`
+                                        if (min === 0) return `Select up to ${max}`
+                                        return `Select ${min}–${max}`
+                                    })()
+
+                                    const statusText = (() => {
+                                        if (min === max) return `${totalSelected}/${max}`
+                                        return `${totalSelected}/${max}`
+                                    })()
+
+                                    const statusTone = (() => {
+                                        if (totalSelected < min) return "text-amber-600"
+                                        if (totalSelected > max) return "text-destructive"
+                                        if (totalSelected >= min && totalSelected <= max) {
+                                            // For exact groups, satisfied is exact; for ranged groups, satisfied is within range.
+                                            const exactOk = (min === max) ? (totalSelected === max) : true
+                                            return exactOk ? "text-green-600" : "text-muted-foreground"
+                                        }
+                                        return "text-muted-foreground"
+                                    })()
 
                                     return (
                                         <div key={g.id} className="rounded-md border p-3 space-y-2">
                                             <div className="flex items-center justify-between">
                                                 <div>
                                                     <div className="font-medium">{g.name}</div>
-                                                    <div className="text-xs text-muted-foreground">Select exactly {required}</div>
+                                                    <div className="text-xs text-muted-foreground">{ruleText}</div>
                                                 </div>
-                                                <div className={cn("text-xs font-medium", totalSelected === required ? "text-green-600" : "text-muted-foreground")}>
-                                                    {totalSelected}/{required}
+                                                <div className={cn("text-xs font-medium", statusTone)}>
+                                                    {statusText}
                                                 </div>
                                             </div>
 
@@ -1120,7 +1143,7 @@ export default function POSPage() {
                                                     .filter((o: ModifierOption) => (o.available ?? true))
                                                     .map((o: ModifierOption) => {
                                                         const c = Number(counts[o.id] || 0)
-                                                        const canInc = totalSelected < required
+                                                        const canInc = totalSelected < max
                                                         return (
                                                             <div key={o.id} className="flex items-center justify-between gap-2">
                                                                 <div className="flex-1">

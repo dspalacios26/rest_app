@@ -127,12 +127,18 @@ export default function POSPage() {
 
     const [submitting, setSubmitting] = useState(false)
     const [historyOrders, setHistoryOrders] = useState<Order[]>([])
+    const [storeData, setStoreData] = useState<any>(null)
 
-    // Configurable item state
-    const [configOpen, setConfigOpen] = useState(false)
-    const [configItem, setConfigItem] = useState<MenuItem | null>(null)
-    const [configCounts, setConfigCounts] = useState<Record<string, Record<string, number>>>({})
-    const [configPieces, setConfigPieces] = useState<Record<string, string[][]>>({})
+    // Terminal States
+    const [isTerminalLoading, setIsTerminalLoading] = useState(false)
+    const [terminalStatus, setTerminalStatus] = useState<string | null>(null)
+
+    // Fetch store info
+    useEffect(() => {
+        if (storeId) {
+            supabase.from('stores').select('*').eq('id', storeId).single().then(({ data }) => setStoreData(data))
+        }
+    }, [storeId])
 
     // Fetch history
     useEffect(() => {
@@ -477,6 +483,29 @@ export default function POSPage() {
         setActiveTab('menu')
     }
 
+    // Configurable item state
+    const [configOpen, setConfigOpen] = useState(false)
+    const [configItem, setConfigItem] = useState<MenuItem | null>(null)
+    const [configCounts, setConfigCounts] = useState<Record<string, Record<string, number>>>({})
+    const [configPieces, setConfigPieces] = useState<Record<string, string[][]>>({})
+
+    // Fetch history
+    useEffect(() => {
+        if (activeTab === 'history' && storeId) {
+            const fetchHistory = async () => {
+                const { data } = await supabase
+                    .from('orders')
+                    .select('*, items:order_items(*, menu_items(*))')
+                    .eq('store_id', storeId)
+                    .in('status', ['paid', 'cancelled'])
+                    .order('created_at', { ascending: false })
+                    .limit(50)
+                if (data) setHistoryOrders(data)
+            }
+            fetchHistory()
+        }
+    }, [activeTab, storeId])
+
     const handleCancelOrder = async (orderId: string) => {
         if (!confirm("Are you sure you want to cancel this order?")) return
         const { error } = await supabase.from('orders').update({ status: 'cancelled' }).eq('id', orderId)
@@ -515,6 +544,70 @@ export default function POSPage() {
 
         setPaymentOrder(null)
         refreshOrders()
+    }
+
+    const handleTerminalPayment = async () => {
+        if (!paymentOrder || !storeData?.mp_device_id) {
+            alert("No terminal configured for this store.")
+            return
+        }
+
+        setIsTerminalLoading(true)
+        setTerminalStatus("Initializing terminal...")
+
+        try {
+            const tip = parseFloat(tipAmount) || 0
+            const totalToPay = (paymentOrder.total_amount || 0) + tip
+
+            const res = await fetch('/api/mercadopago/point', {
+                method: 'POST',
+                body: JSON.stringify({
+                    amount: totalToPay,
+                    orderId: paymentOrder.id,
+                    deviceId: storeData.mp_device_id
+                })
+            })
+
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || "Failed to start terminal payment")
+
+            const intentId = data.id
+            setTerminalStatus("Tap or Swipe card on terminal...")
+
+            // Start Polling
+            let attempts = 0
+            const interval = setInterval(async () => {
+                attempts++
+                try {
+                    const statusRes = await fetch(`/api/mercadopago/point?deviceId=${storeData.mp_device_id}&paymentIntentId=${intentId}`)
+                    const statusData = await statusRes.json()
+
+                    if (statusData.status === 'FINISHED' || statusData.status === 'CLOSED') {
+                        clearInterval(interval)
+                        setTerminalStatus("Payment Approved!")
+                        setIsTerminalLoading(false)
+                        handleConfirmPayment()
+                    } else if (statusData.status === 'CANCELED' || statusData.status === 'EXPIRED') {
+                        clearInterval(interval)
+                        setTerminalStatus("Payment Failed: " + statusData.status)
+                        setIsTerminalLoading(false)
+                    }
+                } catch (e) {
+                    console.error("Polling error", e)
+                }
+
+                if (attempts > 120) { // 10 minutes
+                    clearInterval(interval)
+                    setTerminalStatus("Payment Timeout")
+                    setIsTerminalLoading(false)
+                }
+            }, 5000)
+
+        } catch (err: any) {
+            alert(err.message)
+            setIsTerminalLoading(false)
+            setTerminalStatus(null)
+        }
     }
 
     return (
@@ -760,149 +853,149 @@ export default function POSPage() {
                     )}
                 >
                     <Card className={cn("w-full flex flex-col shadow-lg border-l h-full", !showCartSidebar && "border-0 shadow-none")}>
-                    <div className="p-4 border-b bg-muted/20">
-                        <h2 className="font-semibold flex items-center gap-2">
-                            {editingOrderId ? 'Editing Order' : 'New Order'}
-                        </h2>
-                        {editingOrderId && <span className="text-xs text-orange-500">Updating will return order to queue</span>}
-                    </div>
-
-                    <div className="p-4 grid gap-4 bg-muted/10">
-                        <div className="space-y-2">
-                            <Label className="text-xs">Table No.</Label>
-                            <Input
-                                value={tableNumber}
-                                onChange={e => setTableNumber(e.target.value)}
-                                placeholder="#"
-                                className="h-8"
-                            />
+                        <div className="p-4 border-b bg-muted/20">
+                            <h2 className="font-semibold flex items-center gap-2">
+                                {editingOrderId ? 'Editing Order' : 'New Order'}
+                            </h2>
+                            {editingOrderId && <span className="text-xs text-orange-500">Updating will return order to queue</span>}
                         </div>
 
-                        <div className="space-y-2">
-                            <Label className="text-xs">Plates</Label>
-                            <div className="flex items-center gap-2">
-                                <Select value={String(selectedPlate)} onValueChange={(v) => setSelectedPlate(parseInt(v, 10) || 1)}>
-                                    <SelectTrigger className="h-8">
-                                        <SelectValue placeholder="Select plate" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
-                                            <SelectItem key={p} value={String(p)}>
-                                                Plate {p}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => {
-                                        setPlateCount(c => c + 1)
-                                        setSelectedPlate(plateCount + 1)
-                                    }}
-                                >
-                                    + Plate
-                                </Button>
+                        <div className="p-4 grid gap-4 bg-muted/10">
+                            <div className="space-y-2">
+                                <Label className="text-xs">Table No.</Label>
+                                <Input
+                                    value={tableNumber}
+                                    onChange={e => setTableNumber(e.target.value)}
+                                    placeholder="#"
+                                    className="h-8"
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs">Plates</Label>
+                                <div className="flex items-center gap-2">
+                                    <Select value={String(selectedPlate)} onValueChange={(v) => setSelectedPlate(parseInt(v, 10) || 1)}>
+                                        <SelectTrigger className="h-8">
+                                            <SelectValue placeholder="Select plate" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                <SelectItem key={p} value={String(p)}>
+                                                    Plate {p}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                            setPlateCount(c => c + 1)
+                                            setSelectedPlate(plateCount + 1)
+                                        }}
+                                    >
+                                        + Plate
+                                    </Button>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                        {cart.length === 0 ? (
-                            <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-2 opacity-50">
-                                <Utensils className="w-12 h-12" />
-                                <p>Cart is empty</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-5">
-                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
-                                    const plateItems = cart.filter(i => i.plate === plate)
-                                    const plateTotal = plateItems.reduce((acc, i) => acc + (cartItemUnitPrice(i) * i.quantity), 0)
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                            {cart.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-muted-foreground space-y-2 opacity-50">
+                                    <Utensils className="w-12 h-12" />
+                                    <p>Cart is empty</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-5">
+                                    {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((plate) => {
+                                        const plateItems = cart.filter(i => i.plate === plate)
+                                        const plateTotal = plateItems.reduce((acc, i) => acc + (cartItemUnitPrice(i) * i.quantity), 0)
 
-                                    return (
-                                        <div key={plate} className="space-y-2">
-                                            <div className="flex items-center justify-between">
-                                                <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plate {plate}</div>
-                                                <div className="text-xs text-muted-foreground">{plateItems.length > 0 ? formatCurrency(plateTotal) : ''}</div>
-                                            </div>
+                                        return (
+                                            <div key={plate} className="space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plate {plate}</div>
+                                                    <div className="text-xs text-muted-foreground">{plateItems.length > 0 ? formatCurrency(plateTotal) : ''}</div>
+                                                </div>
 
-                                            {plateItems.length === 0 ? (
-                                                <div className="text-xs text-muted-foreground italic">No items</div>
-                                            ) : (
-                                                <div className="space-y-3">
-                                                    {plateItems.map(item => (
-                                                        <div key={item.lineId} className="flex gap-2">
-                                                            <div className="flex-1">
-                                                                <div className="flex justify-between font-medium text-sm">
-                                                                    <span>{item.name}</span>
-                                                                    <span>{formatCurrency(cartItemUnitPrice(item) * item.quantity)}</span>
-                                                                </div>
-                                                                {formatModifiersSummary(item.modifiers) && (
-                                                                    <div className="text-xs text-muted-foreground mt-0.5">
-                                                                        {formatModifiersSummary(item.modifiers)}
+                                                {plateItems.length === 0 ? (
+                                                    <div className="text-xs text-muted-foreground italic">No items</div>
+                                                ) : (
+                                                    <div className="space-y-3">
+                                                        {plateItems.map(item => (
+                                                            <div key={item.lineId} className="flex gap-2">
+                                                                <div className="flex-1">
+                                                                    <div className="flex justify-between font-medium text-sm">
+                                                                        <span>{item.name}</span>
+                                                                        <span>{formatCurrency(cartItemUnitPrice(item) * item.quantity)}</span>
                                                                     </div>
-                                                                )}
-                                                                <div className="flex items-center gap-2 mt-1">
-                                                                    <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
-                                                                        <Minus className="w-3 h-3" />
-                                                                    </Button>
-                                                                    <span className="text-sm w-4 text-center">{item.quantity}</span>
-                                                                    <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
-                                                                        <Plus className="w-3 h-3" />
-                                                                    </Button>
-
-                                                                    <div className="ml-auto flex items-center gap-2">
-                                                                        <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
-                                                                            <SelectTrigger className="h-7 w-[110px] text-xs">
-                                                                                <SelectValue />
-                                                                            </SelectTrigger>
-                                                                            <SelectContent>
-                                                                                {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
-                                                                                    <SelectItem key={p} value={String(p)}>
-                                                                                        Plate {p}
-                                                                                    </SelectItem>
-                                                                                ))}
-                                                                            </SelectContent>
-                                                                        </Select>
-
-                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
-                                                                            <Trash2 className="w-3 h-3" />
+                                                                    {formatModifiersSummary(item.modifiers) && (
+                                                                        <div className="text-xs text-muted-foreground mt-0.5">
+                                                                            {formatModifiersSummary(item.modifiers)}
+                                                                        </div>
+                                                                    )}
+                                                                    <div className="flex items-center gap-2 mt-1">
+                                                                        <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, -1)}>
+                                                                            <Minus className="w-3 h-3" />
                                                                         </Button>
+                                                                        <span className="text-sm w-4 text-center">{item.quantity}</span>
+                                                                        <Button variant="outline" size="icon" className="h-6 w-6 rounded-full" onClick={() => updateQuantity(item.lineId, 1)}>
+                                                                            <Plus className="w-3 h-3" />
+                                                                        </Button>
+
+                                                                        <div className="ml-auto flex items-center gap-2">
+                                                                            <Select value={String(item.plate)} onValueChange={(v) => moveToPlate(item.lineId, parseInt(v, 10) || 1)}>
+                                                                                <SelectTrigger className="h-7 w-[110px] text-xs">
+                                                                                    <SelectValue />
+                                                                                </SelectTrigger>
+                                                                                <SelectContent>
+                                                                                    {Array.from({ length: plateCount }, (_, idx) => idx + 1).map((p) => (
+                                                                                        <SelectItem key={p} value={String(p)}>
+                                                                                            Plate {p}
+                                                                                        </SelectItem>
+                                                                                    ))}
+                                                                                </SelectContent>
+                                                                            </Select>
+
+                                                                            <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => removeFromCart(item.lineId)}>
+                                                                                <Trash2 className="w-3 h-3" />
+                                                                            </Button>
+                                                                        </div>
                                                                     </div>
                                                                 </div>
                                                             </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="p-4 border-t space-y-4 bg-muted/20">
-                        <div className="space-y-2">
-                            <div className="flex justify-between font-bold text-lg pt-2 border-t">
-                                <span>Total</span>
-                                <span>{formatCurrency(total)}</span>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-2">
-                            {editingOrderId && (
-                                <Button variant="outline" className="flex-1" onClick={resetCart}>
-                                    Cancel
-                                </Button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )
+                                    })}
+                                </div>
                             )}
-                            <Button className="flex-1 gap-2" size="lg" disabled={cart.length === 0 || submitting} onClick={handlePlaceOrder}>
-                                {submitting ? "Processing..." : (
-                                    editingOrderId ? "Update Order" : "Place Order"
-                                )}
-                            </Button>
                         </div>
-                    </div>
+
+                        <div className="p-4 border-t space-y-4 bg-muted/20">
+                            <div className="space-y-2">
+                                <div className="flex justify-between font-bold text-lg pt-2 border-t">
+                                    <span>Total</span>
+                                    <span>{formatCurrency(total)}</span>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-2">
+                                {editingOrderId && (
+                                    <Button variant="outline" className="flex-1" onClick={resetCart}>
+                                        Cancel
+                                    </Button>
+                                )}
+                                <Button className="flex-1 gap-2" size="lg" disabled={cart.length === 0 || submitting} onClick={handlePlaceOrder}>
+                                    {submitting ? "Processing..." : (
+                                        editingOrderId ? "Update Order" : "Place Order"
+                                    )}
+                                </Button>
+                            </div>
+                        </div>
                     </Card>
                 </div>
             )}
@@ -1094,307 +1187,307 @@ export default function POSPage() {
                                 return <div className="text-sm text-muted-foreground">No customizable options.</div>
                             }
 
-                        const isPerPieceGroup = (g: ModifierGroup) => (g.mode || 'count') === 'per_piece'
+                            const isPerPieceGroup = (g: ModifierGroup) => (g.mode || 'count') === 'per_piece'
 
-                        const groupTotals = new Map<string, number>()
-                        for (const g of groups) {
-                            if (isPerPieceGroup(g)) continue
-                            const counts = configCounts[g.id] || {}
-                            groupTotals.set(g.id, Object.values(counts).reduce((a, b) => a + (b || 0), 0))
-                        }
-
-                        const isGroupSatisfied = (g: ModifierGroup) => {
-                            if (isPerPieceGroup(g)) {
-                                const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
-                                const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
-                                const pieces = configPieces[g.id] || []
-                                if (pieces.length !== pieceCount) return false
-                                return pieces.every((piece) => (piece?.length || 0) >= minPerPiece)
+                            const groupTotals = new Map<string, number>()
+                            for (const g of groups) {
+                                if (isPerPieceGroup(g)) continue
+                                const counts = configCounts[g.id] || {}
+                                groupTotals.set(g.id, Object.values(counts).reduce((a, b) => a + (b || 0), 0))
                             }
-                            const totalSelected = groupTotals.get(g.id) || 0
-                            const min = typeof g.min === 'number' ? g.min : 0
-                            const max = typeof g.max === 'number' ? g.max : min
-                            if (min === max) return totalSelected === max
-                            return totalSelected >= min && totalSelected <= max
-                        }
 
-                        const allSatisfied = groups.every(isGroupSatisfied)
+                            const isGroupSatisfied = (g: ModifierGroup) => {
+                                if (isPerPieceGroup(g)) {
+                                    const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                    const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
+                                    const pieces = configPieces[g.id] || []
+                                    if (pieces.length !== pieceCount) return false
+                                    return pieces.every((piece) => (piece?.length || 0) >= minPerPiece)
+                                }
+                                const totalSelected = groupTotals.get(g.id) || 0
+                                const min = typeof g.min === 'number' ? g.min : 0
+                                const max = typeof g.max === 'number' ? g.max : min
+                                if (min === max) return totalSelected === max
+                                return totalSelected >= min && totalSelected <= max
+                            }
 
-                        const snapshot: OrderItemModifierSelection[] = groups.map((g: ModifierGroup) => {
-                            if (isPerPieceGroup(g)) {
-                                const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
-                                const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
-                                const piecesRaw = configPieces[g.id] || []
-                                const pieces = Array.from({ length: pieceCount }, (_, i) => {
-                                    const ids = piecesRaw[i] || []
-                                    const perOption: Record<string, number> = {}
-                                    for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
+                            const allSatisfied = groups.every(isGroupSatisfied)
+
+                            const snapshot: OrderItemModifierSelection[] = groups.map((g: ModifierGroup) => {
+                                if (isPerPieceGroup(g)) {
+                                    const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                    const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
+                                    const piecesRaw = configPieces[g.id] || []
+                                    const pieces = Array.from({ length: pieceCount }, (_, i) => {
+                                        const ids = piecesRaw[i] || []
+                                        const perOption: Record<string, number> = {}
+                                        for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
+                                        return {
+                                            label: `${labelBase} ${i + 1}`,
+                                            selections: (g.options || [])
+                                                .map((o: ModifierOption) => ({
+                                                    option_id: o.id,
+                                                    option_name: o.name,
+                                                    price_delta: Number(o.price_delta || 0),
+                                                    quantity: Number(perOption[o.id] || 0),
+                                                }))
+                                                .filter((x) => x.quantity > 0),
+                                        }
+                                    })
+
                                     return {
-                                        label: `${labelBase} ${i + 1}`,
-                                        selections: (g.options || [])
-                                            .map((o: ModifierOption) => ({
-                                                option_id: o.id,
-                                                option_name: o.name,
-                                                price_delta: Number(o.price_delta || 0),
-                                                quantity: Number(perOption[o.id] || 0),
-                                            }))
-                                            .filter((x) => x.quantity > 0),
+                                        group_id: g.id,
+                                        group_name: g.name,
+                                        mode: 'per_piece',
+                                        pieces,
+                                        selections: [],
                                     }
-                                })
+                                }
 
+                                const counts = configCounts[g.id] || {}
                                 return {
                                     group_id: g.id,
                                     group_name: g.name,
-                                    mode: 'per_piece',
-                                    pieces,
-                                    selections: [],
+                                    mode: 'count',
+                                    selections: (g.options || [])
+                                        .map((o: ModifierOption) => ({
+                                            option_id: o.id,
+                                            option_name: o.name,
+                                            price_delta: Number(o.price_delta || 0),
+                                            quantity: Number(counts[o.id] || 0),
+                                        }))
+                                        .filter((x) => x.quantity > 0),
                                 }
-                            }
+                            })
 
-                            const counts = configCounts[g.id] || {}
-                            return {
-                                group_id: g.id,
-                                group_name: g.name,
-                                mode: 'count',
-                                selections: (g.options || [])
-                                    .map((o: ModifierOption) => ({
-                                        option_id: o.id,
-                                        option_name: o.name,
-                                        price_delta: Number(o.price_delta || 0),
-                                        quantity: Number(counts[o.id] || 0),
-                                    }))
-                                    .filter((x) => x.quantity > 0),
-                            }
-                        })
-
-                        const extra = modifiersExtra(snapshot)
-                        const unit = (item.price || 0) + extra
+                            const extra = modifiersExtra(snapshot)
+                            const unit = (item.price || 0) + extra
 
                             return (
                                 <div className="space-y-4">
-                                {groups.map((g: ModifierGroup) => {
-                                    if (isPerPieceGroup(g)) {
-                                        const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
-                                        const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
-                                        const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
-                                        const pieces = configPieces[g.id] || []
-                                        const satisfiedCount = pieces.filter(p => (p?.length || 0) >= minPerPiece).length
+                                    {groups.map((g: ModifierGroup) => {
+                                        if (isPerPieceGroup(g)) {
+                                            const pieceCount = Math.max(1, Number(g.piece_count ?? (Number.isFinite(g.max) ? g.max : g.min) ?? 1))
+                                            const labelBase = (g.piece_label || 'Piece').trim() || 'Piece'
+                                            const minPerPiece = typeof g.min_per_piece === 'number' ? g.min_per_piece : 1
+                                            const pieces = configPieces[g.id] || []
+                                            const satisfiedCount = pieces.filter(p => (p?.length || 0) >= minPerPiece).length
 
-                                        const ruleText = `Pick at least ${minPerPiece} per ${labelBase}`
-                                        const statusTone = satisfiedCount === pieceCount ? "text-green-600" : "text-amber-600"
+                                            const ruleText = `Pick at least ${minPerPiece} per ${labelBase}`
+                                            const statusTone = satisfiedCount === pieceCount ? "text-green-600" : "text-amber-600"
+
+                                            return (
+                                                <div key={g.id} className="rounded-md border p-3 space-y-3">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <div className="font-medium">{g.name}</div>
+                                                            <div className="text-xs text-muted-foreground">{ruleText}</div>
+                                                        </div>
+                                                        <div className={cn("text-xs font-medium", statusTone)}>
+                                                            {Math.min(satisfiedCount, pieceCount)}/{pieceCount}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="space-y-3">
+                                                        {Array.from({ length: pieceCount }, (_, pieceIdx) => {
+                                                            const ids = pieces[pieceIdx] || []
+                                                            const perOption: Record<string, number> = {}
+                                                            for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
+                                                            const pieceSelected = ids.length
+                                                            const pieceTone = pieceSelected >= minPerPiece ? "text-green-600" : "text-amber-600"
+                                                            return (
+                                                                <div key={pieceIdx} className="rounded-md border bg-muted/20 p-2 space-y-2">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="text-sm font-medium">{labelBase} {pieceIdx + 1}</div>
+                                                                        <div className={cn("text-xs font-medium", pieceTone)}>
+                                                                            {pieceSelected}/{minPerPiece}
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div className="space-y-2">
+                                                                        {(g.options || [])
+                                                                            .filter((o: ModifierOption) => (o.available ?? true))
+                                                                            .map((o: ModifierOption) => {
+                                                                                const c = Number(perOption[o.id] || 0)
+                                                                                return (
+                                                                                    <div key={o.id} className="flex items-center justify-between gap-2">
+                                                                                        <div className="flex-1">
+                                                                                            <div className="text-sm font-medium">{o.name}</div>
+                                                                                            {!!Number(o.price_delta || 0) && (
+                                                                                                <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
+                                                                                            )}
+                                                                                        </div>
+                                                                                        <div className="flex items-center gap-2">
+                                                                                            <Button
+                                                                                                type="button"
+                                                                                                variant="outline"
+                                                                                                size="icon"
+                                                                                                className="h-7 w-7 rounded-full"
+                                                                                                disabled={c <= 0}
+                                                                                                onClick={() => {
+                                                                                                    setConfigPieces(prev => {
+                                                                                                        const next = { ...prev }
+                                                                                                        const arr = (next[g.id] || []).map(p => [...p])
+                                                                                                        const before = arr[pieceIdx] || []
+                                                                                                        const idx = before.lastIndexOf(o.id)
+                                                                                                        if (idx >= 0) {
+                                                                                                            before.splice(idx, 1)
+                                                                                                        }
+                                                                                                        arr[pieceIdx] = before
+                                                                                                        next[g.id] = arr
+                                                                                                        return next
+                                                                                                    })
+                                                                                                }}
+                                                                                            >
+                                                                                                <Minus className="w-3 h-3" />
+                                                                                            </Button>
+                                                                                            <div className="w-6 text-center text-sm">{c}</div>
+                                                                                            <Button
+                                                                                                type="button"
+                                                                                                variant="outline"
+                                                                                                size="icon"
+                                                                                                className="h-7 w-7 rounded-full"
+                                                                                                onClick={() => {
+                                                                                                    setConfigPieces(prev => {
+                                                                                                        const next = { ...prev }
+                                                                                                        const arr = (next[g.id] || []).map(p => [...p])
+                                                                                                        const before = arr[pieceIdx] || []
+                                                                                                        before.push(o.id)
+                                                                                                        arr[pieceIdx] = before
+                                                                                                        next[g.id] = arr
+                                                                                                        return next
+                                                                                                    })
+                                                                                                }}
+                                                                                            >
+                                                                                                <Plus className="w-3 h-3" />
+                                                                                            </Button>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )
+                                                                            })}
+                                                                    </div>
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )
+                                        }
+
+                                        const counts = configCounts[g.id] || {}
+                                        const totalSelected = groupTotals.get(g.id) || 0
+                                        const min = typeof g.min === 'number' ? g.min : 0
+                                        const max = typeof g.max === 'number' ? g.max : min
+
+                                        const ruleText = (() => {
+                                            if (min === max) return `Select exactly ${max}`
+                                            if (min === 0) return `Select up to ${max}`
+                                            return `Select ${min}–${max}`
+                                        })()
+
+                                        const statusText = (() => {
+                                            if (min === max) return `${totalSelected}/${max}`
+                                            return `${totalSelected}/${max}`
+                                        })()
+
+                                        const statusTone = (() => {
+                                            if (totalSelected < min) return "text-amber-600"
+                                            if (totalSelected > max) return "text-destructive"
+                                            if (totalSelected >= min && totalSelected <= max) {
+                                                // For exact groups, satisfied is exact; for ranged groups, satisfied is within range.
+                                                const exactOk = (min === max) ? (totalSelected === max) : true
+                                                return exactOk ? "text-green-600" : "text-muted-foreground"
+                                            }
+                                            return "text-muted-foreground"
+                                        })()
 
                                         return (
-                                            <div key={g.id} className="rounded-md border p-3 space-y-3">
+                                            <div key={g.id} className="rounded-md border p-3 space-y-2">
                                                 <div className="flex items-center justify-between">
                                                     <div>
                                                         <div className="font-medium">{g.name}</div>
                                                         <div className="text-xs text-muted-foreground">{ruleText}</div>
                                                     </div>
                                                     <div className={cn("text-xs font-medium", statusTone)}>
-                                                        {Math.min(satisfiedCount, pieceCount)}/{pieceCount}
+                                                        {statusText}
                                                     </div>
                                                 </div>
 
-                                                <div className="space-y-3">
-                                                    {Array.from({ length: pieceCount }, (_, pieceIdx) => {
-                                                        const ids = pieces[pieceIdx] || []
-                                                        const perOption: Record<string, number> = {}
-                                                        for (const id of ids) perOption[id] = (perOption[id] || 0) + 1
-                                                        const pieceSelected = ids.length
-                                                        const pieceTone = pieceSelected >= minPerPiece ? "text-green-600" : "text-amber-600"
-                                                        return (
-                                                            <div key={pieceIdx} className="rounded-md border bg-muted/20 p-2 space-y-2">
-                                                                <div className="flex items-center justify-between">
-                                                                    <div className="text-sm font-medium">{labelBase} {pieceIdx + 1}</div>
-                                                                    <div className={cn("text-xs font-medium", pieceTone)}>
-                                                                        {pieceSelected}/{minPerPiece}
+                                                <div className="space-y-2">
+                                                    {(g.options || [])
+                                                        .filter((o: ModifierOption) => (o.available ?? true))
+                                                        .map((o: ModifierOption) => {
+                                                            const c = Number(counts[o.id] || 0)
+                                                            const canInc = totalSelected < max
+                                                            return (
+                                                                <div key={o.id} className="flex items-center justify-between gap-2">
+                                                                    <div className="flex-1">
+                                                                        <div className="text-sm font-medium">{o.name}</div>
+                                                                        {!!Number(o.price_delta || 0) && (
+                                                                            <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="flex items-center gap-2">
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="outline"
+                                                                            size="icon"
+                                                                            className="h-7 w-7 rounded-full"
+                                                                            disabled={c <= 0}
+                                                                            onClick={() => {
+                                                                                setConfigCounts(prev => ({
+                                                                                    ...prev,
+                                                                                    [g.id]: { ...prev[g.id], [o.id]: Math.max(0, (prev[g.id]?.[o.id] || 0) - 1) }
+                                                                                }))
+                                                                            }}
+                                                                        >
+                                                                            <Minus className="w-3 h-3" />
+                                                                        </Button>
+                                                                        <div className="w-6 text-center text-sm">{c}</div>
+                                                                        <Button
+                                                                            type="button"
+                                                                            variant="outline"
+                                                                            size="icon"
+                                                                            className="h-7 w-7 rounded-full"
+                                                                            disabled={!canInc}
+                                                                            onClick={() => {
+                                                                                setConfigCounts(prev => ({
+                                                                                    ...prev,
+                                                                                    [g.id]: { ...prev[g.id], [o.id]: (prev[g.id]?.[o.id] || 0) + 1 }
+                                                                                }))
+                                                                            }}
+                                                                        >
+                                                                            <Plus className="w-3 h-3" />
+                                                                        </Button>
                                                                     </div>
                                                                 </div>
-
-                                                                <div className="space-y-2">
-                                                                    {(g.options || [])
-                                                                        .filter((o: ModifierOption) => (o.available ?? true))
-                                                                        .map((o: ModifierOption) => {
-                                                                            const c = Number(perOption[o.id] || 0)
-                                                                            return (
-                                                                                <div key={o.id} className="flex items-center justify-between gap-2">
-                                                                                    <div className="flex-1">
-                                                                                        <div className="text-sm font-medium">{o.name}</div>
-                                                                                        {!!Number(o.price_delta || 0) && (
-                                                                                            <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
-                                                                                        )}
-                                                                                    </div>
-                                                                                    <div className="flex items-center gap-2">
-                                                                                        <Button
-                                                                                            type="button"
-                                                                                            variant="outline"
-                                                                                            size="icon"
-                                                                                            className="h-7 w-7 rounded-full"
-                                                                                            disabled={c <= 0}
-                                                                                            onClick={() => {
-                                                                                                setConfigPieces(prev => {
-                                                                                                    const next = { ...prev }
-                                                                                                    const arr = (next[g.id] || []).map(p => [...p])
-                                                                                                    const before = arr[pieceIdx] || []
-                                                                                                    const idx = before.lastIndexOf(o.id)
-                                                                                                    if (idx >= 0) {
-                                                                                                        before.splice(idx, 1)
-                                                                                                    }
-                                                                                                    arr[pieceIdx] = before
-                                                                                                    next[g.id] = arr
-                                                                                                    return next
-                                                                                                })
-                                                                                            }}
-                                                                                        >
-                                                                                            <Minus className="w-3 h-3" />
-                                                                                        </Button>
-                                                                                        <div className="w-6 text-center text-sm">{c}</div>
-                                                                                        <Button
-                                                                                            type="button"
-                                                                                            variant="outline"
-                                                                                            size="icon"
-                                                                                            className="h-7 w-7 rounded-full"
-                                                                                            onClick={() => {
-                                                                                                setConfigPieces(prev => {
-                                                                                                    const next = { ...prev }
-                                                                                                    const arr = (next[g.id] || []).map(p => [...p])
-                                                                                                    const before = arr[pieceIdx] || []
-                                                                                                    before.push(o.id)
-                                                                                                    arr[pieceIdx] = before
-                                                                                                    next[g.id] = arr
-                                                                                                    return next
-                                                                                                })
-                                                                                            }}
-                                                                                        >
-                                                                                            <Plus className="w-3 h-3" />
-                                                                                        </Button>
-                                                                                    </div>
-                                                                                </div>
-                                                                            )
-                                                                        })}
-                                                                </div>
-                                                            </div>
-                                                        )
-                                                    })}
+                                                            )
+                                                        })}
                                                 </div>
                                             </div>
                                         )
-                                    }
+                                    })}
 
-                                    const counts = configCounts[g.id] || {}
-                                    const totalSelected = groupTotals.get(g.id) || 0
-                                    const min = typeof g.min === 'number' ? g.min : 0
-                                    const max = typeof g.max === 'number' ? g.max : min
+                                    <div className="flex items-center justify-between text-sm">
+                                        <div className="text-muted-foreground">Unit price</div>
+                                        <div className="font-medium">{formatCurrency(unit)}</div>
+                                    </div>
 
-                                    const ruleText = (() => {
-                                        if (min === max) return `Select exactly ${max}`
-                                        if (min === 0) return `Select up to ${max}`
-                                        return `Select ${min}–${max}`
-                                    })()
-
-                                    const statusText = (() => {
-                                        if (min === max) return `${totalSelected}/${max}`
-                                        return `${totalSelected}/${max}`
-                                    })()
-
-                                    const statusTone = (() => {
-                                        if (totalSelected < min) return "text-amber-600"
-                                        if (totalSelected > max) return "text-destructive"
-                                        if (totalSelected >= min && totalSelected <= max) {
-                                            // For exact groups, satisfied is exact; for ranged groups, satisfied is within range.
-                                            const exactOk = (min === max) ? (totalSelected === max) : true
-                                            return exactOk ? "text-green-600" : "text-muted-foreground"
-                                        }
-                                        return "text-muted-foreground"
-                                    })()
-
-                                    return (
-                                        <div key={g.id} className="rounded-md border p-3 space-y-2">
-                                            <div className="flex items-center justify-between">
-                                                <div>
-                                                    <div className="font-medium">{g.name}</div>
-                                                    <div className="text-xs text-muted-foreground">{ruleText}</div>
-                                                </div>
-                                                <div className={cn("text-xs font-medium", statusTone)}>
-                                                    {statusText}
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                {(g.options || [])
-                                                    .filter((o: ModifierOption) => (o.available ?? true))
-                                                    .map((o: ModifierOption) => {
-                                                        const c = Number(counts[o.id] || 0)
-                                                        const canInc = totalSelected < max
-                                                        return (
-                                                            <div key={o.id} className="flex items-center justify-between gap-2">
-                                                                <div className="flex-1">
-                                                                    <div className="text-sm font-medium">{o.name}</div>
-                                                                    {!!Number(o.price_delta || 0) && (
-                                                                        <div className="text-xs text-muted-foreground">+{formatCurrency(Number(o.price_delta || 0))}</div>
-                                                                    )}
-                                                                </div>
-                                                                <div className="flex items-center gap-2">
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant="outline"
-                                                                        size="icon"
-                                                                        className="h-7 w-7 rounded-full"
-                                                                        disabled={c <= 0}
-                                                                        onClick={() => {
-                                                                            setConfigCounts(prev => ({
-                                                                                ...prev,
-                                                                                [g.id]: { ...prev[g.id], [o.id]: Math.max(0, (prev[g.id]?.[o.id] || 0) - 1) }
-                                                                            }))
-                                                                        }}
-                                                                    >
-                                                                        <Minus className="w-3 h-3" />
-                                                                    </Button>
-                                                                    <div className="w-6 text-center text-sm">{c}</div>
-                                                                    <Button
-                                                                        type="button"
-                                                                        variant="outline"
-                                                                        size="icon"
-                                                                        className="h-7 w-7 rounded-full"
-                                                                        disabled={!canInc}
-                                                                        onClick={() => {
-                                                                            setConfigCounts(prev => ({
-                                                                                ...prev,
-                                                                                [g.id]: { ...prev[g.id], [o.id]: (prev[g.id]?.[o.id] || 0) + 1 }
-                                                                            }))
-                                                                        }}
-                                                                    >
-                                                                        <Plus className="w-3 h-3" />
-                                                                    </Button>
-                                                                </div>
-                                                            </div>
-                                                        )
-                                                    })}
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-
-                                <div className="flex items-center justify-between text-sm">
-                                    <div className="text-muted-foreground">Unit price</div>
-                                    <div className="font-medium">{formatCurrency(unit)}</div>
-                                </div>
-
-                                <DialogFooter>
-                                    <Button type="button" variant="secondary" onClick={() => setConfigOpen(false)}>
-                                        Cancel
-                                    </Button>
-                                    <Button
-                                        type="button"
-                                        disabled={!allSatisfied}
-                                        onClick={() => {
-                                            addToCart(item, snapshot)
-                                            setConfigOpen(false)
-                                        }}
-                                    >
-                                        Add to cart
-                                    </Button>
-                                </DialogFooter>
+                                    <DialogFooter>
+                                        <Button type="button" variant="secondary" onClick={() => setConfigOpen(false)}>
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            disabled={!allSatisfied}
+                                            onClick={() => {
+                                                addToCart(item, snapshot)
+                                                setConfigOpen(false)
+                                            }}
+                                        >
+                                            Add to cart
+                                        </Button>
+                                    </DialogFooter>
                                 </div>
                             )
                         })()}
@@ -1455,11 +1548,20 @@ export default function POSPage() {
                             <span>Total to Pay</span>
                             <span>{formatCurrency((paymentOrder?.total_amount || 0) + (parseFloat(tipAmount) || 0))}</span>
                         </div>
+
+                        {terminalStatus && (
+                            <div className={cn("text-center p-3 rounded-lg border animate-pulse bg-primary/5 text-primary font-medium")}>
+                                {terminalStatus}
+                            </div>
+                        )}
                     </div>
 
-                    <DialogFooter>
-                        <Button variant="outline" onClick={() => setPaymentOrder(null)}>Cancel</Button>
-                        <Button onClick={handleConfirmPayment}>Confirm Payment</Button>
+                    <DialogFooter className="flex flex-col sm:flex-row gap-2">
+                        <Button variant="ghost" onClick={() => setPaymentOrder(null)} disabled={isTerminalLoading}>Cancel</Button>
+                        <Button variant="outline" onClick={handleConfirmPayment} disabled={isTerminalLoading}>Confirm Cash/Manual</Button>
+                        <Button onClick={handleTerminalPayment} disabled={isTerminalLoading} className="gap-2">
+                            <CreditCard className="w-4 h-4" /> {isTerminalLoading ? "Processing..." : "Pay with Terminal"}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>

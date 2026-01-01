@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { Plus, Edit, Trash2 } from "lucide-react"
+import { useState, useEffect } from "react"
+import { Plus, Edit, Trash2, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useMenu, MenuItem, ModifierGroup, ModifierOption } from "@/hooks/use-menu"
+import { supabase } from "@/lib/supabase"
 
 const newId = () => {
     const cryptoObj = globalThis.crypto as Crypto | undefined
@@ -19,9 +20,28 @@ export function MenuManager({ storeId }: { storeId: string }) {
     const { menuItems, upsertItem, deleteItem } = useMenu(storeId)
     const [isOpen, setIsOpen] = useState(false)
     const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null)
+    const [storeSettings, setStoreSettings] = useState<{ mp_device_id?: string } | null>(null)
 
     // Categories from existing items + default ones
     const categories = Array.from(new Set([...menuItems.map(i => i.category), 'Mains', 'Appetizers', 'Drinks', 'Dessert']))
+
+    // Fetch store settings
+    useEffect(() => {
+        const fetchStore = async () => {
+            const { data } = await supabase.from('stores').select('*').eq('id', storeId).single()
+            if (data) setStoreSettings(data)
+        }
+        fetchStore()
+    }, [storeId])
+
+    const updateStoreSettings = async () => {
+        const { error } = await supabase.from('stores').update({ mp_device_id: storeSettings?.mp_device_id }).eq('id', storeId)
+        if (error) {
+            alert("Failed to update store settings")
+        } else {
+            alert("Settings updated")
+        }
+    }
 
     const handleOpen = (item?: MenuItem) => {
         setEditingItem(item || { category: 'Mains', available: true, modifier_groups: [] })
@@ -413,6 +433,31 @@ export function MenuManager({ storeId }: { storeId: string }) {
                         </div>
                     </div>
                 ))}
+            </div>
+
+            {/* Store Settings / Device ID */}
+            <div className="mt-8 pt-6 border-t">
+                <div className="flex items-center gap-2 mb-4">
+                    <Settings className="w-5 h-5 text-muted-foreground" />
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Store Settings</h3>
+                </div>
+                <div className="space-y-4 bg-muted/30 p-4 rounded-lg border">
+                    <div className="space-y-2">
+                        <Label htmlFor="mp_device_id">Mercado Pago Point Device ID</Label>
+                        <div className="flex gap-2">
+                            <Input
+                                id="mp_device_id"
+                                placeholder="e.g. 12345678"
+                                value={storeSettings?.mp_device_id || ''}
+                                onChange={e => setStoreSettings(prev => ({ ...prev, mp_device_id: e.target.value }))}
+                            />
+                            <Button onClick={updateStoreSettings}>Save Settings</Button>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                            Required to trigger physical payments automatically. Find this in your Mercado Pago account.
+                        </p>
+                    </div>
+                </div>
             </div>
         </div>
     )

@@ -1497,7 +1497,7 @@ export default function POSPage() {
 
             {/* Payment Dialog */}
             <Dialog open={!!paymentOrder} onOpenChange={(open) => !open && setPaymentOrder(null)}>
-                <DialogContent className="sm:max-w-md">
+                <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Complete Payment</DialogTitle>
                         <DialogDescription>
@@ -1505,22 +1505,20 @@ export default function POSPage() {
                         </DialogDescription>
                     </DialogHeader>
 
+                    {/* ... (rest of content) */}
                     <div className="space-y-4 py-4">
                         {/* Mini Menu Summary */}
-                        <div className="bg-muted/30 rounded-lg p-3 space-y-2 max-h-[200px] overflow-y-auto text-sm border">
+                        <div className="bg-muted/30 rounded-lg p-3 space-y-3 max-h-[200px] overflow-y-auto text-sm border">
                             {paymentOrder?.items?.map((item, idx) => (
-                                <div key={idx} className="flex justify-between gap-2">
-                                    <span>
+                                <div key={idx} className="border-b last:border-0 pb-2 last:pb-0">
+                                    <div className="font-medium">
                                         {item.quantity}x {item.menu_items?.name}
-                                        {formatModifiersSummary(item.modifiers) && (
-                                            <span className="text-xs text-muted-foreground"> • {formatModifiersSummary(item.modifiers)}</span>
-                                        )}
-                                    </span>
-                                    {/* Price? We assume price is in item from my hook, but hook might need fix to return price_at_time if separate. 
-                          Wait, my hook `use-orders` returns `menu_items(name)`. `order_items` usually has price.
-                          Let's assume we proceed without detailed item price here or add it to hook if critical.
-                          User asked for "mini menu of how much it was". Total is what matters usually.
-                      */}
+                                    </div>
+                                    {formatModifiersSummary(item.modifiers) && (
+                                        <div className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                                            {formatModifiersSummary(item.modifiers)}
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -1531,10 +1529,11 @@ export default function POSPage() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label>Add Tip (Optional)</Label>
+                            <Label htmlFor="tip-amount">Add Tip (Optional)</Label>
                             <div className="relative">
                                 <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
                                 <Input
+                                    id="tip-amount"
                                     type="number"
                                     className="pl-7"
                                     placeholder="0.00"
@@ -1557,8 +1556,8 @@ export default function POSPage() {
                     </div>
 
                     <DialogFooter className="flex flex-col sm:flex-row gap-2">
-                        <Button variant="ghost" onClick={() => setPaymentOrder(null)} disabled={isTerminalLoading}>Cancel</Button>
-                        <Button variant="outline" onClick={handleConfirmPayment} disabled={isTerminalLoading}>Confirm Cash/Manual</Button>
+                        <Button variant="ghost" className="sm:mr-auto" onClick={() => setPaymentOrder(null)} disabled={isTerminalLoading}>Cancel</Button>
+                        <Button variant="outline" onClick={handleConfirmPayment} disabled={isTerminalLoading}>Manual Pay</Button>
                         <Button onClick={handleTerminalPayment} disabled={isTerminalLoading} className="gap-2">
                             <CreditCard className="w-4 h-4" /> {isTerminalLoading ? "Processing..." : "Pay with Terminal"}
                         </Button>

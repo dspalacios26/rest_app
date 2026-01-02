@@ -613,8 +613,10 @@ export default function POSPage() {
         const devices = Array.isArray(storeData?.mp_devices) ? storeData.mp_devices : []
         const fallbackId = storeData?.mp_device_id
 
-        if (devices.length > 0) {
+        if (devices.length > 1) {
             setTerminalSelectionOpen(true)
+        } else if (devices.length === 1) {
+            handleTerminalPayment(devices[0].id)
         } else if (fallbackId) {
             handleTerminalPayment(fallbackId)
         } else {
@@ -1561,8 +1563,16 @@ export default function POSPage() {
                         </div>
 
                         {terminalStatus && (
-                            <div className={cn("text-center p-3 rounded-lg border animate-pulse bg-primary/5 text-primary font-medium")}>
+                            <div className={cn(
+                                "text-center p-3 rounded-lg border font-medium",
+                                terminalStatus.includes("Approved") ? "bg-green-500/10 text-green-600 border-green-500/20" :
+                                    terminalStatus.includes("Failed") || terminalStatus.includes("Timeout") ? "bg-destructive/10 text-destructive border-destructive/20" :
+                                        "animate-pulse bg-primary/5 text-primary border-primary/20"
+                            )}>
                                 {terminalStatus}
+                                {(terminalStatus.includes("Failed") || terminalStatus.includes("Timeout")) && (
+                                    <div className="text-[10px] opacity-80 mt-1">Try again or use Manual Pay</div>
+                                )}
                             </div>
                         )}
                     </div>

@@ -16,11 +16,13 @@ const newId = () => {
     return cryptoObj?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
+type MPDevice = { id: string; name: string }
+
 export function MenuManager({ storeId }: { storeId: string }) {
     const { menuItems, upsertItem, deleteItem } = useMenu(storeId)
     const [isOpen, setIsOpen] = useState(false)
     const [editingItem, setEditingItem] = useState<Partial<MenuItem> | null>(null)
-    const [storeSettings, setStoreSettings] = useState<{ mp_device_id?: string } | null>(null)
+    const [storeSettings, setStoreSettings] = useState<{ mp_device_id?: string; mp_devices?: MPDevice[] } | null>(null)
 
     // Categories from existing items + default ones
     const categories = Array.from(new Set([...menuItems.map(i => i.category), 'Mains', 'Appetizers', 'Drinks', 'Dessert']))
@@ -29,18 +31,47 @@ export function MenuManager({ storeId }: { storeId: string }) {
     useEffect(() => {
         const fetchStore = async () => {
             const { data } = await supabase.from('stores').select('*').eq('id', storeId).single()
-            if (data) setStoreSettings(data)
+            if (data) {
+                // Ensure mp_devices is an array
+                const devices = Array.isArray(data.mp_devices) ? data.mp_devices : []
+                setStoreSettings({ ...data, mp_devices: devices })
+            }
         }
         fetchStore()
     }, [storeId])
 
     const updateStoreSettings = async () => {
-        const { error } = await supabase.from('stores').update({ mp_device_id: storeSettings?.mp_device_id }).eq('id', storeId)
+        const { error } = await supabase.from('stores').update({
+            mp_device_id: storeSettings?.mp_device_id,
+            mp_devices: storeSettings?.mp_devices || []
+        }).eq('id', storeId)
+
         if (error) {
             alert("Failed to update store settings")
         } else {
             alert("Settings updated")
         }
+    }
+
+    const addDevice = () => {
+        setStoreSettings(prev => ({
+            ...prev,
+            mp_devices: [...(prev?.mp_devices || []), { id: '', name: 'New Terminal' }]
+        }))
+    }
+
+    const removeDevice = (idx: number) => {
+        setStoreSettings(prev => ({
+            ...prev,
+            mp_devices: (prev?.mp_devices || []).filter((_, i) => i !== idx)
+        }))
+    }
+
+    const updateDevice = (idx: number, patch: Partial<MPDevice>) => {
+        setStoreSettings(prev => ({
+            ...prev,
+            mp_devices: (prev?.mp_devices || []).map((d, i) => i === idx ? { ...d, ...patch } : d)
+        }))
     }
 
     const handleOpen = (item?: MenuItem) => {
@@ -442,19 +473,50 @@ export function MenuManager({ storeId }: { storeId: string }) {
                     <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Store Settings</h3>
                 </div>
                 <div className="space-y-4 bg-muted/30 p-4 rounded-lg border">
-                    <div className="space-y-2">
-                        <Label htmlFor="mp_device_id">Mercado Pago Point Device ID</Label>
-                        <div className="flex gap-2">
-                            <Input
-                                id="mp_device_id"
-                                placeholder="e.g. 12345678"
-                                value={storeSettings?.mp_device_id || ''}
-                                onChange={e => setStoreSettings(prev => ({ ...prev, mp_device_id: e.target.value }))}
-                            />
-                            <Button onClick={updateStoreSettings}>Save Settings</Button>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <Label className="font-semibold">Mercado Pago Terminals</Label>
+                            <Button variant="outline" size="sm" onClick={addDevice} type="button" className="gap-2">
+                                <Plus className="w-4 h-4" /> Add Terminal
+                            </Button>
                         </div>
+
+                        {(storeSettings?.mp_devices || []).length === 0 && (
+                            <p className="text-xs text-muted-foreground italic">No terminals added. Add one to enable physical payments.</p>
+                        )}
+
+                        <div className="space-y-3">
+                            {(storeSettings?.mp_devices || []).map((device, idx) => (
+                                <div key={idx} className="flex gap-2 items-end border p-3 rounded-md bg-background">
+                                    <div className="flex-1 space-y-1">
+                                        <Label className="text-[10px] uppercase">Name (e.g. Counter 1)</Label>
+                                        <Input
+                                            value={device.name}
+                                            onChange={e => updateDevice(idx, { name: e.target.value })}
+                                            placeholder="Terminal Name"
+                                        />
+                                    </div>
+                                    <div className="flex-1 space-y-1">
+                                        <Label className="text-[10px] uppercase">Device ID</Label>
+                                        <Input
+                                            value={device.id}
+                                            onChange={e => updateDevice(idx, { id: e.target.value })}
+                                            placeholder="ID"
+                                        />
+                                    </div>
+                                    <Button variant="ghost" size="icon" onClick={() => removeDevice(idx)} type="button" className="text-destructive h-10 w-10">
+                                        <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="pt-2 border-t">
+                            <Button className="w-full" onClick={updateStoreSettings} type="button">Save All Settings</Button>
+                        </div>
+
                         <p className="text-[10px] text-muted-foreground">
-                            Required to trigger physical payments automatically. Find this in your Mercado Pago account.
+                            Required to trigger physical payments automatically. Find Device IDs in your Mercado Pago account.
                         </p>
                     </div>
                 </div>

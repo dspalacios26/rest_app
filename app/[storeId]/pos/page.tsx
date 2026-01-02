@@ -132,6 +132,7 @@ export default function POSPage() {
     // Terminal States
     const [isTerminalLoading, setIsTerminalLoading] = useState(false)
     const [terminalStatus, setTerminalStatus] = useState<string | null>(null)
+    const [terminalSelectionOpen, setTerminalSelectionOpen] = useState(false)
 
     // Fetch store info
     useEffect(() => {
@@ -546,12 +547,10 @@ export default function POSPage() {
         refreshOrders()
     }
 
-    const handleTerminalPayment = async () => {
-        if (!paymentOrder || !storeData?.mp_device_id) {
-            alert("No terminal configured for this store.")
-            return
-        }
+    const handleTerminalPayment = async (deviceId: string) => {
+        if (!paymentOrder) return
 
+        setTerminalSelectionOpen(false)
         setIsTerminalLoading(true)
         setTerminalStatus("Initializing terminal...")
 
@@ -564,7 +563,7 @@ export default function POSPage() {
                 body: JSON.stringify({
                     amount: totalToPay,
                     orderId: paymentOrder.id,
-                    deviceId: storeData.mp_device_id
+                    deviceId: deviceId
                 })
             })
 
@@ -579,7 +578,7 @@ export default function POSPage() {
             const interval = setInterval(async () => {
                 attempts++
                 try {
-                    const statusRes = await fetch(`/api/mercadopago/point?deviceId=${storeData.mp_device_id}&paymentIntentId=${intentId}`)
+                    const statusRes = await fetch(`/api/mercadopago/point?deviceId=${deviceId}&paymentIntentId=${intentId}`)
                     const statusData = await statusRes.json()
 
                     if (statusData.status === 'FINISHED' || statusData.status === 'CLOSED') {
@@ -607,6 +606,19 @@ export default function POSPage() {
             alert(err.message)
             setIsTerminalLoading(false)
             setTerminalStatus(null)
+        }
+    }
+
+    const triggerTerminalPayment = () => {
+        const devices = Array.isArray(storeData?.mp_devices) ? storeData.mp_devices : []
+        const fallbackId = storeData?.mp_device_id
+
+        if (devices.length > 0) {
+            setTerminalSelectionOpen(true)
+        } else if (fallbackId) {
+            handleTerminalPayment(fallbackId)
+        } else {
+            alert("No terminal configured. Please add one in settings.")
         }
     }
 
@@ -1558,10 +1570,38 @@ export default function POSPage() {
                     <DialogFooter className="flex flex-col sm:flex-row gap-2">
                         <Button variant="ghost" className="sm:mr-auto" onClick={() => setPaymentOrder(null)} disabled={isTerminalLoading}>Cancel</Button>
                         <Button variant="outline" onClick={handleConfirmPayment} disabled={isTerminalLoading}>Manual Pay</Button>
-                        <Button onClick={handleTerminalPayment} disabled={isTerminalLoading} className="gap-2">
+                        <Button onClick={triggerTerminalPayment} disabled={isTerminalLoading} className="gap-2">
                             <CreditCard className="w-4 h-4" /> {isTerminalLoading ? "Processing..." : "Pay with Terminal"}
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Terminal Selection Dialog */}
+            <Dialog open={terminalSelectionOpen} onOpenChange={setTerminalSelectionOpen}>
+                <DialogContent className="sm:max-w-xs">
+                    <DialogHeader>
+                        <DialogTitle>Select Terminal</DialogTitle>
+                        <DialogDescription>
+                            Choose which terminal to use for this payment.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-2 py-4">
+                        {(storeData?.mp_devices || []).map((device: any) => (
+                            <Button
+                                key={device.id}
+                                variant="outline"
+                                className="justify-start gap-3 h-12"
+                                onClick={() => handleTerminalPayment(device.id)}
+                            >
+                                <CreditCard className="w-4 h-4 text-muted-foreground" />
+                                <div className="text-left">
+                                    <div className="font-medium text-sm">{device.name}</div>
+                                    <div className="text-[10px] text-muted-foreground">ID: {device.id}</div>
+                                </div>
+                            </Button>
+                        ))}
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
